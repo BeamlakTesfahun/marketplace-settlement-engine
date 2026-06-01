@@ -2,6 +2,8 @@ import { prisma } from '../../config/prisma.js';
 import { stripe } from '../../config/stripe.js';
 import { AppError } from '../../utils/AppError.js';
 
+import { createOrderStatusHistory } from '../orders/orderStatusHistory.service.js';
+
 import {
     addRefundRequestedEmailJob,
     addRefundApprovedEmailJob,
@@ -201,6 +203,18 @@ const approveRefund = async (user, orderId) => {
                 productId: item.productId,
                 quantity: item.quantity,
             })),
+        },
+    });
+
+    await createOrderStatusHistory({
+        orderId: order.id,
+        actorId: user.id,
+        fromStatus: order.status,
+        toStatus: 'CANCELLED',
+        reason: 'Admin approved refund',
+        metadata: {
+            refundAmount: Number(order.totalAmount),
+            stripeRefundId: refund.id,
         },
     });
 
