@@ -4,6 +4,8 @@ import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
 
+import { createOrderStatusHistory } from './orderStatusHistory.service.js';
+
 const getReservationExpiry = () => {
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 30);
@@ -183,6 +185,18 @@ const checkout = async (user) => {
                 productId: reservation.productId,
                 quantity: reservation.quantity,
             })),
+        },
+    });
+
+    await createOrderStatusHistory({
+        orderId: order.id,
+        actorId: user.id,
+        fromStatus: null,
+        toStatus: 'PENDING',
+        reason: 'Customer started checkout',
+        metadata: {
+            totalAmount: Number(order.totalAmount),
+            stripeCheckoutSessionId: session.id,
         },
     });
 
@@ -452,7 +466,41 @@ const cancelOrder = async (user, orderId) => {
         },
     });
 
+    await createOrderStatusHistory({
+        orderId: order.id,
+        actorId: user.id,
+        fromStatus: order.status,
+        toStatus: 'CANCELLED',
+        reason: 'Customer cancelled unpaid order',
+        metadata: {
+            paymentStatus: order.paymentStatus,
+        },
+    });
+
     return cancelledOrder;
+};
+
+const getOrderStatusHistory = async (user, orderId) => {
+    await getOrderById(user, orderId);
+
+    return prisma.orderStatusHistory.findMany({
+        where: {
+            orderId,
+        },
+        include: {
+            actor: {
+                select: {
+                    id: true,
+                    fullName: true,
+                    email: true,
+                    role: true,
+                },
+            },
+        },
+        orderBy: {
+            createdAt: 'asc',
+        },
+    });
 };
 
 export const orderService = {
@@ -461,4 +509,5 @@ export const orderService = {
     getOrderById,
     getVendorOrders,
     cancelOrder,
+    getOrderStatusHistory,
 };

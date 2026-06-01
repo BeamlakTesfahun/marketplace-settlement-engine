@@ -79,9 +79,10 @@ model User {
 
   vendorProfile Vendor?
 
-  orders         Order[]
-  refundRequests Order[]    @relation("RefundRequester")
-  auditLogs      AuditLog[]
+  orders             Order[]
+  refundRequests     Order[]              @relation("RefundRequester")
+  auditLogs          AuditLog[]
+  orderStatusChanges OrderStatusHistory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -125,7 +126,6 @@ model Product {
 
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-
 
   inventoryReservations InventoryReservation[]
 
@@ -226,6 +226,7 @@ model Order {
   refundRequestedBy   User?   @relation("RefundRequester", fields: [refundRequestedById], references: [id])
 
   inventoryReservations InventoryReservation[]
+  statusHistory         OrderStatusHistory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -271,6 +272,25 @@ model AuditLog {
   action     String
   entityType String
   entityId   String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+}
+
+model OrderStatusHistory {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id])
+
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+
+  reason String?
 
   metadata Json?
 

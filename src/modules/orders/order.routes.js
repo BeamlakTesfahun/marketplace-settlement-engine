@@ -39,4 +39,10 @@ router.patch(
     orderController.cancelOrder,
 );
 
+router.get(
+    '/:orderId/status-history',
+    validateRequest(orderIdParamSchema),
+    orderController.getOrderStatusHistory,
+);
+
 export default router;
