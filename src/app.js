@@ -9,6 +9,8 @@ import { errorHandler } from './middlewares/errorHandler.js';
 import { globalRateLimiter } from './middlewares/rateLimiter.js';
 
 import { serverAdapter } from './config/bullBoard.js';
+import { protect } from './middlewares/authMiddleware.js';
+import { authorizeRoles } from './middlewares/roleMiddleware.js';
 
 const app = express();
 
@@ -28,7 +30,12 @@ app.get('/', (req, res) => {
 
 app.use('/api/v1', routes);
 
-app.use('/admin/queues', serverAdapter.getRouter());
+app.use(
+    '/admin/queues',
+    protect,
+    authorizeRoles('ADMIN'),
+    serverAdapter.getRouter(),
+);
 
 app.use(notFound);
 
