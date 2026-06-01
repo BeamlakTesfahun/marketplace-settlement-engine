@@ -480,10 +480,34 @@ const cancelOrder = async (user, orderId) => {
     return cancelledOrder;
 };
 
+const getOrderStatusHistory = async (user, orderId) => {
+    await getOrderById(user, orderId);
+
+    return prisma.orderStatusHistory.findMany({
+        where: {
+            orderId,
+        },
+        include: {
+            actor: {
+                select: {
+                    id: true,
+                    fullName: true,
+                    email: true,
+                    role: true,
+                },
+            },
+        },
+        orderBy: {
+            createdAt: 'asc',
+        },
+    });
+};
+
 export const orderService = {
     checkout,
     getMyOrders,
     getOrderById,
     getVendorOrders,
     cancelOrder,
+    getOrderStatusHistory,
 };
