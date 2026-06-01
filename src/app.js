@@ -7,10 +7,10 @@ import webhookRoutes from './modules/webhook/webhook.routes.js';
 import { notFound } from './middlewares/notFound.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { globalRateLimiter } from './middlewares/rateLimiter.js';
+import { basicAuth } from './middlewares/basicAuth.js';
 
 import { serverAdapter } from './config/bullBoard.js';
-import { protect } from './middlewares/authMiddleware.js';
-import { authorizeRoles } from './middlewares/roleMiddleware.js';
+i;
 
 const app = express();
 
@@ -30,12 +30,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/v1', routes);
 
-app.use(
-    '/admin/queues',
-    protect,
-    authorizeRoles('ADMIN'),
-    serverAdapter.getRouter(),
-);
+app.use('/admin/queues', basicAuth, serverAdapter.getRouter());
 
 app.use(notFound);
 
