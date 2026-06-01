@@ -2,6 +2,7 @@ import { prisma } from '../../config/prisma.js';
 import { stripe } from '../../config/stripe.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
+import { createAuditLog } from '../audit/audit.service.js';
 
 const getReservationExpiry = () => {
     const expiresAt = new Date();
@@ -167,6 +168,21 @@ const checkout = async (user) => {
         },
         data: {
             stripeCheckoutSessionId: session.id,
+        },
+    });
+
+    await createAuditLog({
+        userId: user.id,
+        action: 'ORDER_CHECKOUT_CREATED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            totalAmount: Number(order.totalAmount),
+            stripeCheckoutSessionId: session.id,
+            reservedItems: order.inventoryReservations.map((reservation) => ({
+                productId: reservation.productId,
+                quantity: reservation.quantity,
+            })),
         },
     });
 
@@ -388,7 +404,7 @@ const cancelOrder = async (user, orderId) => {
         );
     }
 
-    return prisma.$transaction(async (tx) => {
+    const cancelledOrder = await prisma.$transaction(async (tx) => {
         await restoreOrderStock(tx, order.items);
 
         await tx.inventoryReservation.updateMany({
@@ -415,6 +431,28 @@ const cancelOrder = async (user, orderId) => {
             },
         });
     });
+
+    await createAuditLog({
+        userId: user.id,
+        action: 'ORDER_CANCELLED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            restoredItems: order.items.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+            })),
+            releasedReservations: order.inventoryReservations.map(
+                (reservation) => ({
+                    productId: reservation.productId,
+                    quantity: reservation.quantity,
+                    previousStatus: reservation.status,
+                }),
+            ),
+        },
+    });
+
+    return cancelledOrder;
 };
 
 export const orderService = {

@@ -6,6 +6,7 @@ import productRoutes from '../modules/products/product.routes.js';
 import cartRoutes from '../modules/cart/cart.routes.js';
 import orderRoutes from '../modules/orders/order.routes.js';
 import refundRoutes from '../modules/refunds/refund.routes.js';
+import auditRoutes from '../modules/audit/audit.routes.js';
 
 const router = express.Router();
 
@@ -16,5 +17,6 @@ router.use('/products', productRoutes);
 router.use('/cart', cartRoutes);
 router.use('/orders', orderRoutes);
 router.use('/refunds', refundRoutes);
+router.use('/audit-logs', auditRoutes);
 
 export default router;

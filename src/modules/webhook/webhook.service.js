@@ -1,5 +1,6 @@
 import { prisma } from '../../config/prisma.js';
 import { addOrderConfirmationEmailJob } from '../../jobs/producers/email.producer.js';
+import { createAuditLog } from '../audit/audit.service.js';
 
 const confirmInventoryReservations = async (tx, orderId) => {
     await tx.inventoryReservation.updateMany({
@@ -41,6 +42,8 @@ const releaseInventoryReservations = async (tx, order) => {
             status: 'EXPIRED',
         },
     });
+
+    return activeReservations;
 };
 
 const handleCheckoutCompleted = async (event) => {
@@ -48,7 +51,7 @@ const handleCheckoutCompleted = async (event) => {
     const orderId = session.metadata?.orderId;
 
     if (!orderId) {
-        return;
+        return null;
     }
 
     const order = await prisma.order.findUnique({
@@ -62,15 +65,16 @@ const handleCheckoutCompleted = async (event) => {
                     email: true,
                 },
             },
+            inventoryReservations: true,
         },
     });
 
     if (!order) {
-        return;
+        return null;
     }
 
     if (order.paymentStatus === 'PAID') {
-        return;
+        return null;
     }
 
     const updatedOrder = await prisma.$transaction(async (tx) => {
@@ -94,6 +98,7 @@ const handleCheckoutCompleted = async (event) => {
                         email: true,
                     },
                 },
+                inventoryReservations: true,
             },
         });
 
@@ -102,12 +107,39 @@ const handleCheckoutCompleted = async (event) => {
         return paidOrder;
     });
 
+    await createAuditLog({
+        action: 'PAYMENT_CONFIRMED',
+        entityType: 'ORDER',
+        entityId: updatedOrder.id,
+        metadata: {
+            stripeEventId: event.id,
+            stripePaymentIntentId: updatedOrder.stripePaymentIntentId,
+            totalAmount: Number(updatedOrder.totalAmount),
+        },
+    });
+
+    await createAuditLog({
+        action: 'INVENTORY_CONFIRMED',
+        entityType: 'ORDER',
+        entityId: updatedOrder.id,
+        metadata: {
+            stripeEventId: event.id,
+            reservations: order.inventoryReservations.map((reservation) => ({
+                productId: reservation.productId,
+                quantity: reservation.quantity,
+                previousStatus: reservation.status,
+            })),
+        },
+    });
+
     await addOrderConfirmationEmailJob({
         to: updatedOrder.user.email,
         customerName: updatedOrder.user.fullName,
         orderId: updatedOrder.id,
         totalAmount: Number(updatedOrder.totalAmount),
     });
+
+    return updatedOrder;
 };
 
 const handleCheckoutExpired = async (event) => {
@@ -115,7 +147,7 @@ const handleCheckoutExpired = async (event) => {
     const orderId = session.metadata?.orderId;
 
     if (!orderId) {
-        return;
+        return null;
     }
 
     const order = await prisma.order.findUnique({
@@ -128,15 +160,18 @@ const handleCheckoutExpired = async (event) => {
     });
 
     if (!order) {
-        return;
+        return null;
     }
 
     if (order.status !== 'PENDING' || order.paymentStatus !== 'PENDING') {
-        return;
+        return null;
     }
 
-    await prisma.$transaction(async (tx) => {
-        await releaseInventoryReservations(tx, order);
+    const releasedReservations = await prisma.$transaction(async (tx) => {
+        const activeReservations = await releaseInventoryReservations(
+            tx,
+            order,
+        );
 
         await tx.order.update({
             where: {
@@ -147,7 +182,33 @@ const handleCheckoutExpired = async (event) => {
                 cancelledAt: new Date(),
             },
         });
+
+        return activeReservations;
     });
+
+    await createAuditLog({
+        action: 'CHECKOUT_EXPIRED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            stripeEventId: event.id,
+        },
+    });
+
+    await createAuditLog({
+        action: 'INVENTORY_RELEASED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            stripeEventId: event.id,
+            releasedReservations: releasedReservations.map((reservation) => ({
+                productId: reservation.productId,
+                quantity: reservation.quantity,
+            })),
+        },
+    });
+
+    return order;
 };
 
 export const processStripeEvent = async (event) => {
@@ -185,6 +246,15 @@ export const processStripeEvent = async (event) => {
             stripeEventId: event.id,
             type: event.type,
             processed: true,
+        },
+    });
+
+    await createAuditLog({
+        action: 'STRIPE_WEBHOOK_PROCESSED',
+        entityType: 'STRIPE_EVENT',
+        entityId: event.id,
+        metadata: {
+            eventType: event.type,
         },
     });
 

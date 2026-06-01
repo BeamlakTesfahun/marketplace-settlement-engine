@@ -8,6 +8,8 @@ import {
     addRefundRejectedEmailJob,
 } from '../../jobs/producers/email.producer.js';
 
+import { createAuditLog } from '../audit/audit.service.js';
+
 const restoreOrderStock = async (tx, orderItems) => {
     for (const item of orderItems) {
         await tx.product.update({
@@ -84,6 +86,17 @@ const requestRefund = async (user, orderId, payload) => {
             refundReason: payload.reason,
             refundRequestedAt: new Date(),
             refundRequestedById: user.id,
+        },
+    });
+
+    await createAuditLog({
+        userId: user.id,
+        action: 'REFUND_REQUESTED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            reason: payload.reason,
+            totalAmount: Number(order.totalAmount),
         },
     });
 
@@ -176,6 +189,21 @@ const approveRefund = async (user, orderId) => {
         });
     });
 
+    await createAuditLog({
+        userId: user.id,
+        action: 'REFUND_APPROVED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            stripeRefundId: refund.id,
+            refundAmount: Number(order.totalAmount),
+            restoredItems: order.items.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+            })),
+        },
+    });
+
     await addRefundApprovedEmailJob({
         to: order.user.email,
         customerName: order.user.fullName,
@@ -224,6 +252,16 @@ const rejectRefund = async (user, orderId) => {
         data: {
             refundStatus: 'REJECTED',
             refundProcessedAt: new Date(),
+        },
+    });
+
+    await createAuditLog({
+        userId: user.id,
+        action: 'REFUND_REJECTED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            totalAmount: Number(order.totalAmount),
         },
     });
 
