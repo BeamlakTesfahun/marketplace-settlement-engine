@@ -7,6 +7,7 @@ import cartRoutes from '../modules/cart/cart.routes.js';
 import orderRoutes from '../modules/orders/order.routes.js';
 import refundRoutes from '../modules/refunds/refund.routes.js';
 import auditRoutes from '../modules/audit/audit.routes.js';
+import payoutRoutes from '../modules/payout/payout.routes.js';
 
 import couponRoutes from '../modules/coupons/coupon.routes.js';
 
@@ -22,5 +23,6 @@ router.use('/refunds', refundRoutes);
 router.use('/audit-logs', auditRoutes);
 
 router.use('/coupons', couponRoutes);
+router.use('/payouts', payoutRoutes);
 
 export default router;
