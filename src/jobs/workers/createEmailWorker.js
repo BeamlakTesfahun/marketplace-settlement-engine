@@ -14,6 +14,8 @@ export const createEmailWorker = ({ queueName, connection, sendEmail }) => {
                     'refund-requested-email',
                     'refund-approved-email',
                     'refund-rejected-email',
+                    'payout-paid-email',
+                    'payout-failed-email',
                 ].includes(job.name)
             ) {
                 await sendEmail({

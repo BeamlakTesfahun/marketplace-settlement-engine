@@ -19,9 +19,11 @@ const transporter = nodemailer.createTransport({
 
 const getEmailContent = ({
     type,
+    vendorName,
     customerName,
     orderId,
     totalAmount,
+    payoutAmount,
     reason,
 }) => {
     if (type === 'order-confirmation-email') {
@@ -68,6 +70,30 @@ const getEmailContent = ({
                 <p>Hello ${customerName},</p>
                 <p>Your refund request for order <strong>${orderId}</strong> was rejected.</p>
             `,
+        };
+    }
+
+    if (type === 'payout-paid-email') {
+        return {
+            subject: 'Your vendor payout has been processed',
+            html: `
+            <h2>Payout Processed</h2>
+            <p>Hello ${vendorName},</p>
+            <p>Your payout for order <strong>${orderId}</strong> has been processed.</p>
+            <p>Payout Amount: <strong>$${payoutAmount}</strong></p>
+        `,
+        };
+    }
+
+    if (type === 'payout-failed-email') {
+        return {
+            subject: 'Your vendor payout failed',
+            html: `
+            <h2>Payout Failed</h2>
+            <p>Hello ${vendorName},</p>
+            <p>Your payout for order <strong>${orderId}</strong> failed.</p>
+            <p>Reason: <strong>${reason}</strong></p>
+        `,
         };
     }
 
