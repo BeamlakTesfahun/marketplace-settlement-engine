@@ -65,3 +65,35 @@ export const addRefundRejectedEmailJob = async (payload) => {
         removeOnFail: false,
     });
 };
+
+export const addPayoutPaidEmailJob = async (payload) => {
+    return emailQueue.add('payout-paid-email', payload, {
+        jobId: `payout-paid-${payload.payoutId}`,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: {
+            age: 3600,
+            count: 1000,
+        },
+        removeOnFail: false,
+    });
+};
+
+export const addPayoutFailedEmailJob = async (payload) => {
+    return emailQueue.add('payout-failed-email', payload, {
+        jobId: `payout-failed-${payload.payoutId}`,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: {
+            age: 3600,
+            count: 1000,
+        },
+        removeOnFail: false,
+    });
+};
