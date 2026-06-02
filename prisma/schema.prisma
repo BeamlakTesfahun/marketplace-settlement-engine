@@ -67,6 +67,17 @@ enum RefundReason {
   OTHER
 }
 
+enum CouponType {
+  FIXED
+  PERCENTAGE
+}
+
+enum CouponStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
 model User {
   id       String @id @default(cuid())
   fullName String
@@ -83,6 +94,7 @@ model User {
   refundRequests     Order[]              @relation("RefundRequester")
   auditLogs          AuditLog[]
   orderStatusChanges OrderStatusHistory[]
+  couponUsages       CouponUsage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -99,6 +111,7 @@ model Vendor {
 
   products   Product[]
   orderItems OrderItem[]
+  coupons    Coupon[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -227,6 +240,11 @@ model Order {
 
   inventoryReservations InventoryReservation[]
   statusHistory         OrderStatusHistory[]
+  couponUsages          CouponUsage[]
+
+  couponCode     String?
+  discountAmount Decimal  @default(0) @db.Decimal(10, 2)
+  subtotalAmount Decimal? @db.Decimal(10, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -295,4 +313,49 @@ model OrderStatusHistory {
   metadata Json?
 
   createdAt DateTime @default(now())
+}
+
+model Coupon {
+  id String @id @default(cuid())
+
+  code String @unique
+
+  type  CouponType
+  value Decimal    @db.Decimal(10, 2)
+
+  status CouponStatus @default(ACTIVE)
+
+  expiresAt DateTime?
+
+  usageLimit Int?
+  usedCount  Int  @default(0)
+
+  perUserLimit Int?
+
+  vendorId String?
+  vendor   Vendor? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  usages CouponUsage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CouponUsage {
+  id String @id @default(cuid())
+
+  couponId String
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  discountAmount Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, orderId])
 }
