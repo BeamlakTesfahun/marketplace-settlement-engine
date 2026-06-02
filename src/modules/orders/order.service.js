@@ -29,7 +29,91 @@ const restoreOrderStock = async (tx, orderItems) => {
     }
 };
 
-const checkout = async (user) => {
+const calculateDiscountAmount = (coupon, subtotalAmount) => {
+    if (!coupon) {
+        return 0;
+    }
+
+    if (coupon.type === 'FIXED') {
+        return Math.min(Number(coupon.value), subtotalAmount);
+    }
+
+    if (coupon.type === 'PERCENTAGE') {
+        return Math.min(
+            (subtotalAmount * Number(coupon.value)) / 100,
+            subtotalAmount,
+        );
+    }
+
+    return 0;
+};
+
+const validateCouponForCheckout = async ({ couponCode, userId, cartItems }) => {
+    if (!couponCode) {
+        return null;
+    }
+
+    const coupon = await prisma.coupon.findUnique({
+        where: {
+            code: couponCode.toUpperCase(),
+        },
+    });
+
+    if (!coupon) {
+        throw new AppError('Coupon not found.', 404, 'COUPON_NOT_FOUND');
+    }
+
+    if (coupon.status !== 'ACTIVE') {
+        throw new AppError('Coupon is not active.', 400, 'COUPON_NOT_ACTIVE');
+    }
+
+    if (coupon.expiresAt && coupon.expiresAt < new Date()) {
+        throw new AppError('Coupon has expired.', 400, 'COUPON_EXPIRED');
+    }
+
+    if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+        throw new AppError(
+            'Coupon usage limit reached.',
+            400,
+            'COUPON_USAGE_LIMIT_REACHED',
+        );
+    }
+
+    if (coupon.perUserLimit) {
+        const userUsageCount = await prisma.couponUsage.count({
+            where: {
+                couponId: coupon.id,
+                userId,
+            },
+        });
+
+        if (userUsageCount >= coupon.perUserLimit) {
+            throw new AppError(
+                'You have already used this coupon the maximum allowed number of times.',
+                400,
+                'COUPON_USER_LIMIT_REACHED',
+            );
+        }
+    }
+
+    if (coupon.vendorId) {
+        const hasVendorProduct = cartItems.some(
+            (item) => item.product.vendorId === coupon.vendorId,
+        );
+
+        if (!hasVendorProduct) {
+            throw new AppError(
+                'Coupon is not valid for products in this cart.',
+                400,
+                'COUPON_VENDOR_NOT_APPLICABLE',
+            );
+        }
+    }
+
+    return coupon;
+};
+
+const checkout = async (user, payload = {}) => {
     if (user.role !== 'CUSTOMER') {
         throw new AppError(
             'Only customers can place orders.',
@@ -77,15 +161,27 @@ const checkout = async (user) => {
         }
     }
 
-    const totalAmount = cart.items.reduce((sum, item) => {
+    const subtotalAmount = cart.items.reduce((sum, item) => {
         return sum + Number(item.product.price) * item.quantity;
     }, 0);
+
+    const coupon = await validateCouponForCheckout({
+        couponCode: payload.couponCode,
+        userId: user.id,
+        cartItems: cart.items,
+    });
+
+    const discountAmount = calculateDiscountAmount(coupon, subtotalAmount);
+    const totalAmount = subtotalAmount - discountAmount;
 
     const order = await prisma.$transaction(async (tx) => {
         const createdOrder = await tx.order.create({
             data: {
                 userId: user.id,
+                subtotalAmount,
+                discountAmount,
                 totalAmount,
+                couponCode: coupon?.code ?? null,
                 status: 'PENDING',
                 paymentStatus: 'PENDING',
                 items: {
@@ -114,6 +210,28 @@ const checkout = async (user) => {
                 inventoryReservations: true,
             },
         });
+
+        if (coupon) {
+            await tx.couponUsage.create({
+                data: {
+                    couponId: coupon.id,
+                    userId: user.id,
+                    orderId: createdOrder.id,
+                    discountAmount,
+                },
+            });
+
+            await tx.coupon.update({
+                where: {
+                    id: coupon.id,
+                },
+                data: {
+                    usedCount: {
+                        increment: 1,
+                    },
+                },
+            });
+        }
 
         for (const item of cart.items) {
             const updatedStock = item.product.stock - item.quantity;
@@ -156,11 +274,20 @@ const checkout = async (user) => {
             },
             quantity: item.quantity,
         })),
+        discounts: coupon
+            ? [
+                  {
+                      coupon: undefined,
+                  },
+              ]
+            : undefined,
         success_url: `${env.clientUrl}/payment-success?orderId=${order.id}`,
         cancel_url: `${env.clientUrl}/payment-cancel?orderId=${order.id}`,
         metadata: {
             orderId: order.id,
             userId: user.id,
+            couponCode: coupon?.code ?? '',
+            discountAmount: String(discountAmount),
         },
     });
 
@@ -179,7 +306,10 @@ const checkout = async (user) => {
         entityType: 'ORDER',
         entityId: order.id,
         metadata: {
+            subtotalAmount: Number(order.subtotalAmount),
+            discountAmount: Number(order.discountAmount),
             totalAmount: Number(order.totalAmount),
+            couponCode: order.couponCode,
             stripeCheckoutSessionId: session.id,
             reservedItems: order.inventoryReservations.map((reservation) => ({
                 productId: reservation.productId,
@@ -195,7 +325,10 @@ const checkout = async (user) => {
         toStatus: 'PENDING',
         reason: 'Customer started checkout',
         metadata: {
+            subtotalAmount: Number(order.subtotalAmount),
+            discountAmount: Number(order.discountAmount),
             totalAmount: Number(order.totalAmount),
+            couponCode: order.couponCode,
             stripeCheckoutSessionId: session.id,
         },
     });
@@ -203,6 +336,10 @@ const checkout = async (user) => {
     return {
         orderId: order.id,
         checkoutUrl: session.url,
+        subtotalAmount,
+        discountAmount,
+        totalAmount,
+        couponCode: coupon?.code ?? null,
     };
 };
 
@@ -239,6 +376,7 @@ const getMyOrders = async (user) => {
                 },
             },
             inventoryReservations: true,
+            couponUsages: true,
         },
         orderBy: {
             createdAt: 'desc',
@@ -279,6 +417,11 @@ const getOrderById = async (user, orderId) => {
                 },
             },
             inventoryReservations: true,
+            couponUsages: {
+                include: {
+                    coupon: true,
+                },
+            },
         },
     });
 
@@ -354,6 +497,11 @@ const getVendorOrders = async (user) => {
                             email: true,
                         },
                     },
+                    couponUsages: {
+                        include: {
+                            coupon: true,
+                        },
+                    },
                 },
             },
             product: {
@@ -379,6 +527,7 @@ const cancelOrder = async (user, orderId) => {
         include: {
             items: true,
             inventoryReservations: true,
+            couponUsages: true,
         },
     });
 
@@ -431,6 +580,27 @@ const cancelOrder = async (user, orderId) => {
             },
         });
 
+        if (order.couponUsages.length > 0) {
+            for (const usage of order.couponUsages) {
+                await tx.coupon.update({
+                    where: {
+                        id: usage.couponId,
+                    },
+                    data: {
+                        usedCount: {
+                            decrement: 1,
+                        },
+                    },
+                });
+            }
+
+            await tx.couponUsage.deleteMany({
+                where: {
+                    orderId,
+                },
+            });
+        }
+
         return tx.order.update({
             where: {
                 id: orderId,
@@ -463,6 +633,10 @@ const cancelOrder = async (user, orderId) => {
                     previousStatus: reservation.status,
                 }),
             ),
+            revertedCoupons: order.couponUsages.map((usage) => ({
+                couponId: usage.couponId,
+                discountAmount: Number(usage.discountAmount),
+            })),
         },
     });
 
@@ -474,6 +648,7 @@ const cancelOrder = async (user, orderId) => {
         reason: 'Customer cancelled unpaid order',
         metadata: {
             paymentStatus: order.paymentStatus,
+            couponCode: order.couponCode,
         },
     });
 
