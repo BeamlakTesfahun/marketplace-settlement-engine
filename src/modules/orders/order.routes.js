@@ -7,6 +7,8 @@ import { checkoutRateLimiter } from '../../middlewares/rateLimiter.js';
 import { validateRequest } from '../../middlewares/validateRequest.js';
 import { orderIdParamSchema } from './order.validation.js';
 
+import { checkoutSchema } from './order.validation.js';
+
 const router = express.Router();
 
 router.use(protect);
@@ -15,6 +17,7 @@ router.post(
     '/checkout',
     checkoutRateLimiter,
     authorizeRoles('CUSTOMER'),
+    validateRequest(checkoutSchema),
     orderController.checkout,
 );
 
