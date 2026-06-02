@@ -1,6 +1,7 @@
 import { prisma } from '../../config/prisma.js';
 import { addOrderConfirmationEmailJob } from '../../jobs/producers/email.producer.js';
 import { createAuditLog } from '../audit/audit.service.js';
+import { payoutService } from '../payouts/payout.service.js';
 
 const confirmInventoryReservations = async (tx, orderId) => {
     await tx.inventoryReservation.updateMany({
@@ -65,6 +66,7 @@ const handleCheckoutCompleted = async (event) => {
                     email: true,
                 },
             },
+            items: true,
             inventoryReservations: true,
         },
     });
@@ -103,6 +105,7 @@ const handleCheckoutCompleted = async (event) => {
         });
 
         await confirmInventoryReservations(tx, orderId);
+        await payoutService.createPayoutsForOrder(tx, order);
 
         return paidOrder;
     });
