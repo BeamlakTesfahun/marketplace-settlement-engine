@@ -10,7 +10,9 @@ import { globalRateLimiter } from './middlewares/rateLimiter.js';
 import { basicAuth } from './middlewares/basicAuth.js';
 
 import { serverAdapter } from './config/bullBoard.js';
-i;
+
+import swaggerUi from 'swagger-ui-express';
+import { swaggerSpec } from './config/swagger.js';
 
 const app = express();
 
@@ -32,6 +34,7 @@ app.use('/api/v1', routes);
 
 app.use('/admin/queues', basicAuth, serverAdapter.getRouter());
 
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use(notFound);
 
 app.use(errorHandler);
