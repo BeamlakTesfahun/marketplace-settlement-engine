@@ -26,8 +26,29 @@ const deactivateCoupon = asyncHandler(async (req, res) => {
     return sendResponse(res, 200, 'Coupon deactivated successfully.', result);
 });
 
+const getCouponById = asyncHandler(async (req, res) => {
+    const result = await couponService.getCouponById(
+        req.user,
+        req.params.couponId,
+    );
+
+    return sendResponse(res, 200, 'Coupon fetched successfully.', result);
+});
+
+const updateCoupon = asyncHandler(async (req, res) => {
+    const result = await couponService.updateCoupon(
+        req.user,
+        req.params.couponId,
+        req.validatedData.body,
+    );
+
+    return sendResponse(res, 200, 'Coupon updated successfully.', result);
+});
+
 export const couponController = {
     createCoupon,
     getCoupons,
     deactivateCoupon,
+    getCouponById,
+    updateCoupon,
 };
