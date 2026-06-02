@@ -8,6 +8,7 @@ import { couponController } from './coupon.controller.js';
 
 import {
     createCouponSchema,
+    updateCouponSchema,
     couponIdParamSchema,
 } from './coupon.validation.js';
 
@@ -23,6 +24,18 @@ router.post(
 );
 
 router.get('/', couponController.getCoupons);
+
+router.get(
+    '/:couponId',
+    validateRequest(couponIdParamSchema),
+    couponController.getCouponById,
+);
+
+router.patch(
+    '/:couponId',
+    validateRequest(updateCouponSchema),
+    couponController.updateCoupon,
+);
 
 router.patch(
     '/:couponId/deactivate',
