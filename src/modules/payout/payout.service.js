@@ -5,6 +5,11 @@ const PLATFORM_FEE_PERCENTAGE = 10;
 import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
 
+import {
+    addPayoutPaidEmailJob,
+    addPayoutFailedEmailJob,
+} from '../../jobs/producers/email.producer.js';
+
 const getAllPayouts = async (user) => {
     if (user.role !== 'ADMIN') {
         throw new AppError('Only admins can view payouts.', 403, 'FORBIDDEN');
@@ -38,6 +43,18 @@ const markPayoutAsPaid = async (user, payoutId) => {
     const payout = await prisma.vendorPayout.findUnique({
         where: {
             id: payoutId,
+        },
+        include: {
+            vendor: {
+                include: {
+                    user: {
+                        select: {
+                            email: true,
+                            fullName: true,
+                        },
+                    },
+                },
+            },
         },
     });
 
@@ -75,6 +92,14 @@ const markPayoutAsPaid = async (user, payoutId) => {
         },
     });
 
+    await addPayoutPaidEmailJob({
+        to: payout.vendor.user.email,
+        vendorName: payout.vendor.storeName,
+        payoutId: payout.id,
+        orderId: payout.orderId,
+        payoutAmount: Number(payout.payoutAmount),
+    });
+
     return updatedPayout;
 };
 
@@ -90,6 +115,18 @@ const markPayoutAsFailed = async (user, payoutId, reason) => {
     const payout = await prisma.vendorPayout.findUnique({
         where: {
             id: payoutId,
+        },
+        include: {
+            vendor: {
+                include: {
+                    user: {
+                        select: {
+                            email: true,
+                            fullName: true,
+                        },
+                    },
+                },
+            },
         },
     });
 
@@ -126,6 +163,15 @@ const markPayoutAsFailed = async (user, payoutId, reason) => {
             payoutAmount: Number(payout.payoutAmount),
             failureReason: reason,
         },
+    });
+
+    await addPayoutFailedEmailJob({
+        to: payout.vendor.user.email,
+        vendorName: payout.vendor.storeName,
+        payoutId: payout.id,
+        orderId: payout.orderId,
+        payoutAmount: Number(payout.payoutAmount),
+        reason,
     });
 
     return updatedPayout;
