@@ -220,10 +220,59 @@ const getVendorPayouts = async (vendorId) => {
     });
 };
 
+const retryFailedPayout = async (user, payoutId) => {
+    if (user.role !== 'ADMIN') {
+        throw new AppError('Only admins can retry payouts.', 403, 'FORBIDDEN');
+    }
+
+    const payout = await prisma.vendorPayout.findUnique({
+        where: {
+            id: payoutId,
+        },
+    });
+
+    if (!payout) {
+        throw new AppError('Payout not found.', 404, 'PAYOUT_NOT_FOUND');
+    }
+
+    if (payout.status !== 'FAILED') {
+        throw new AppError(
+            'Only failed payouts can be retried.',
+            400,
+            'PAYOUT_NOT_FAILED',
+        );
+    }
+
+    const updatedPayout = await prisma.vendorPayout.update({
+        where: {
+            id: payoutId,
+        },
+        data: {
+            status: 'PENDING',
+            failureReason: null,
+        },
+    });
+
+    await createAuditLog({
+        userId: user.id,
+        action: 'PAYOUT_RETRIED',
+        entityType: 'VENDOR_PAYOUT',
+        entityId: payoutId,
+        metadata: {
+            vendorId: payout.vendorId,
+            orderId: payout.orderId,
+            payoutAmount: Number(payout.payoutAmount),
+        },
+    });
+
+    return updatedPayout;
+};
+
 export const payoutService = {
     createPayoutsForOrder,
     getVendorPayouts,
     getAllPayouts,
     markPayoutAsPaid,
     markPayoutAsFailed,
+    retryFailedPayout,
 };

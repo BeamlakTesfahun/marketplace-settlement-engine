@@ -48,9 +48,19 @@ const markPayoutAsFailed = asyncHandler(async (req, res) => {
     );
 });
 
+const retryFailedPayout = asyncHandler(async (req, res) => {
+    const result = await payoutService.retryFailedPayout(
+        req.user,
+        req.params.payoutId,
+    );
+
+    return sendResponse(res, 200, 'Payout retry started successfully.', result);
+});
+
 export const payoutController = {
     getMyPayouts,
     getAllPayouts,
     markPayoutAsPaid,
     markPayoutAsFailed,
+    retryFailedPayout,
 };

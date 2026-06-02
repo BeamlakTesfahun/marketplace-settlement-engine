@@ -30,4 +30,11 @@ router.patch(
     payoutController.markPayoutAsFailed,
 );
 
+router.patch(
+    '/:payoutId/retry',
+    authorizeRoles('ADMIN'),
+    validateRequest(payoutIdParamSchema),
+    payoutController.retryFailedPayout,
+);
+
 export default router;
