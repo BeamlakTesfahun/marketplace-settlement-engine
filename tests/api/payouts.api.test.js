@@ -186,14 +186,23 @@ describe('Payout API', () => {
         expect(mockAddPayoutFailedEmailJob).toHaveBeenCalledTimes(1);
     });
 
-    it('allows admin to retry failed payout', async () => {
+    it('rejects non-admin from processing payouts', async () => {
+        const response = await request(app)
+            .patch(`/api/v1/payouts/${payout.id}/pay`)
+            .set('Authorization', `Bearer ${customerToken}`);
+
+        expect(response.status).toBe(403);
+        expect(response.body.success).toBe(false);
+    });
+
+    it('allows admin to retry a failed payout', async () => {
         await prisma.vendorPayout.update({
             where: {
                 id: payout.id,
             },
             data: {
                 status: 'FAILED',
-                failureReason: 'Bank failed',
+                failureReason: 'Bank transfer failed',
             },
         });
 
@@ -207,12 +216,12 @@ describe('Payout API', () => {
         expect(response.body.data.failureReason).toBeNull();
     });
 
-    it('rejects non-admin from processing payouts', async () => {
+    it('rejects retry when payout is not failed', async () => {
         const response = await request(app)
-            .patch(`/api/v1/payouts/${payout.id}/pay`)
-            .set('Authorization', `Bearer ${customerToken}`);
+            .patch(`/api/v1/payouts/${payout.id}/retry`)
+            .set('Authorization', `Bearer ${adminToken}`);
 
-        expect(response.status).toBe(403);
+        expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
     });
 });
