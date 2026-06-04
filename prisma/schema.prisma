@@ -79,6 +79,8 @@ enum CouponStatus {
 }
 
 enum PayoutStatus {
+  ON_HOLD
+  AVAILABLE
   PENDING
   PAID
   FAILED
@@ -385,7 +387,10 @@ model VendorPayout {
 
   payoutAmount Decimal @db.Decimal(10, 2)
 
-  status PayoutStatus @default(PENDING)
+  status PayoutStatus @default(ON_HOLD)
+
+  holdReason  String?
+  availableAt DateTime?
 
   paidAt DateTime?
 
@@ -393,4 +398,6 @@ model VendorPayout {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([orderId, vendorId])
 }

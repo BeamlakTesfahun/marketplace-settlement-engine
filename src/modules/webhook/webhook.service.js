@@ -79,36 +79,40 @@ const handleCheckoutCompleted = async (event) => {
         return null;
     }
 
-    const updatedOrder = await prisma.$transaction(async (tx) => {
-        const paidOrder = await tx.order.update({
-            where: {
-                id: orderId,
-            },
-            data: {
-                paymentStatus: 'PAID',
-                status: 'CONFIRMED',
-                stripePaymentIntentId:
-                    typeof session.payment_intent === 'string'
-                        ? session.payment_intent
-                        : session.payment_intent?.id,
-                paidAt: new Date(),
-            },
-            include: {
-                user: {
-                    select: {
-                        fullName: true,
-                        email: true,
-                    },
+    const { paidOrder: updatedOrder, allocatedPayouts } =
+        await prisma.$transaction(async (tx) => {
+            const paidOrder = await tx.order.update({
+                where: {
+                    id: orderId,
                 },
-                inventoryReservations: true,
-            },
+                data: {
+                    paymentStatus: 'PAID',
+                    status: 'CONFIRMED',
+                    stripePaymentIntentId:
+                        typeof session.payment_intent === 'string'
+                            ? session.payment_intent
+                            : session.payment_intent?.id,
+                    paidAt: new Date(),
+                },
+                include: {
+                    user: {
+                        select: {
+                            fullName: true,
+                            email: true,
+                        },
+                    },
+                    inventoryReservations: true,
+                },
+            });
+
+            await confirmInventoryReservations(tx, orderId);
+            const allocatedPayouts = await payoutService.createPayoutsForOrder(
+                tx,
+                order,
+            );
+
+            return { paidOrder, allocatedPayouts };
         });
-
-        await confirmInventoryReservations(tx, orderId);
-        await payoutService.createPayoutsForOrder(tx, order);
-
-        return paidOrder;
-    });
 
     await createAuditLog({
         action: 'PAYMENT_CONFIRMED',
@@ -134,6 +138,26 @@ const handleCheckoutCompleted = async (event) => {
             })),
         },
     });
+
+    if (allocatedPayouts.length > 0) {
+        await createAuditLog({
+            action: 'PAYOUT_ALLOCATED_ON_HOLD',
+            entityType: 'ORDER',
+            entityId: updatedOrder.id,
+            metadata: {
+                stripeEventId: event.id,
+                payouts: allocatedPayouts.map((payout) => ({
+                    payoutId: payout.id,
+                    vendorId: payout.vendorId,
+                    grossAmount: Number(payout.grossAmount),
+                    platformFee: Number(payout.platformFee),
+                    payoutAmount: Number(payout.payoutAmount),
+                    status: payout.status,
+                    holdReason: payout.holdReason,
+                })),
+            },
+        });
+    }
 
     await addOrderConfirmationEmailJob({
         to: updatedOrder.user.email,
