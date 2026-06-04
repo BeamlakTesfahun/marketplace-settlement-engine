@@ -42,6 +42,13 @@ router.patch(
     orderController.cancelOrder,
 );
 
+router.patch(
+    '/:orderId/deliver',
+    authorizeRoles('VENDOR', 'ADMIN'),
+    validateRequest(orderIdParamSchema),
+    orderController.markOrderAsDelivered,
+);
+
 router.get(
     '/:orderId/status-history',
     validateRequest(orderIdParamSchema),

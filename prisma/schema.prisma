@@ -236,6 +236,7 @@ model Order {
   stripeRefundId          String?
 
   paidAt      DateTime?
+  deliveredAt DateTime?
   cancelledAt DateTime?
 
   refundStatus      RefundStatus  @default(NONE)
@@ -370,7 +371,6 @@ model CouponUsage {
 
   @@unique([couponId, orderId])
 }
-
 
 model VendorPayout {
   id String @id @default(cuid())
