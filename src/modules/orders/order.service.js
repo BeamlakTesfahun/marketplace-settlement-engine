@@ -5,6 +5,9 @@ import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
 
 import { createOrderStatusHistory } from './orderStatusHistory.service.js';
+import { payoutService } from '../payouts/payout.service.js';
+
+const DELIVERABLE_ORDER_STATUSES = ['CONFIRMED', 'PROCESSING', 'SHIPPED'];
 
 const getReservationExpiry = () => {
     const expiresAt = new Date();
@@ -655,6 +658,121 @@ const cancelOrder = async (user, orderId) => {
     return cancelledOrder;
 };
 
+const markOrderAsDelivered = async (user, orderId) => {
+    const order = await prisma.order.findUnique({
+        where: {
+            id: orderId,
+        },
+        include: {
+            items: true,
+        },
+    });
+
+    if (!order) {
+        throw new AppError('Order not found.', 404, 'ORDER_NOT_FOUND');
+    }
+
+    if (order.paymentStatus !== 'PAID') {
+        throw new AppError(
+            'Only paid orders can be marked as delivered.',
+            400,
+            'ORDER_NOT_PAID',
+        );
+    }
+
+    if (order.status === 'DELIVERED') {
+        throw new AppError(
+            'Order is already delivered.',
+            409,
+            'ORDER_ALREADY_DELIVERED',
+        );
+    }
+
+    if (!DELIVERABLE_ORDER_STATUSES.includes(order.status)) {
+        throw new AppError(
+            'Order cannot be marked as delivered from its current status.',
+            400,
+            'INVALID_ORDER_STATUS_TRANSITION',
+        );
+    }
+
+    if (user.role === 'VENDOR') {
+        const vendor = await prisma.vendor.findUnique({
+            where: {
+                userId: user.id,
+            },
+        });
+
+        const hasVendorItem = order.items.some(
+            (item) => item.vendorId === vendor?.id,
+        );
+
+        if (!hasVendorItem) {
+            throw new AppError(
+                'You are not allowed to update this order.',
+                403,
+                'FORBIDDEN',
+            );
+        }
+    } else if (user.role !== 'ADMIN') {
+        throw new AppError(
+            'Only vendors or admins can mark orders as delivered.',
+            403,
+            'FORBIDDEN',
+        );
+    }
+
+    const deliveredAt = new Date();
+    const previousStatus = order.status;
+
+    const deliveredOrder = await prisma.$transaction(async (tx) => {
+        const updatedOrder = await tx.order.update({
+            where: {
+                id: orderId,
+            },
+            data: {
+                status: 'DELIVERED',
+                deliveredAt,
+            },
+            include: {
+                items: true,
+            },
+        });
+
+        await payoutService.markPayoutsAvailableForDeliveredOrder(
+            tx,
+            orderId,
+            deliveredAt,
+        );
+
+        return updatedOrder;
+    });
+
+    await createAuditLog({
+        userId: user.id,
+        action: 'ORDER_DELIVERED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+            previousStatus,
+            deliveredAt: deliveredOrder.deliveredAt,
+        },
+    });
+
+    await createOrderStatusHistory({
+        orderId: order.id,
+        actorId: user.id,
+        fromStatus: previousStatus,
+        toStatus: 'DELIVERED',
+        reason: 'Order marked as delivered',
+        metadata: {
+            deliveredAt: deliveredOrder.deliveredAt,
+        },
+    });
+
+    return deliveredOrder;
+};
+
 const getOrderStatusHistory = async (user, orderId) => {
     await getOrderById(user, orderId);
 
@@ -684,5 +802,6 @@ export const orderService = {
     getOrderById,
     getVendorOrders,
     cancelOrder,
+    markOrderAsDelivered,
     getOrderStatusHistory,
 };

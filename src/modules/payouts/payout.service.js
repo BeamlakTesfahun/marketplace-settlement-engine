@@ -8,6 +8,13 @@ import {
 
 const PLATFORM_FEE_PERCENTAGE = 10;
 const PAYOUT_HOLD_REASON_PAYMENT = 'PAYMENT_CAPTURED';
+const DISPUTE_WINDOW_DAYS = 7;
+
+const addDays = (date, days) => {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+};
 
 const isPayoutPayable = (status) =>
     status === 'AVAILABLE' || status === 'PENDING';
@@ -233,6 +240,81 @@ const createPayoutsForOrder = async (tx, order) => {
     return createdPayouts;
 };
 
+const markPayoutsAvailableForDeliveredOrder = async (
+    tx,
+    orderId,
+    deliveredAt,
+) => {
+    const availableAt = addDays(deliveredAt, DISPUTE_WINDOW_DAYS);
+
+    await tx.vendorPayout.updateMany({
+        where: {
+            orderId,
+            status: 'ON_HOLD',
+        },
+        data: {
+            availableAt,
+        },
+    });
+
+    return tx.vendorPayout.findMany({
+        where: {
+            orderId,
+            status: 'ON_HOLD',
+        },
+    });
+};
+
+const releaseEligiblePayouts = async (now = new Date()) => {
+    const eligiblePayouts = await prisma.vendorPayout.findMany({
+        where: {
+            status: 'ON_HOLD',
+            availableAt: {
+                lte: now,
+            },
+        },
+    });
+
+    if (eligiblePayouts.length === 0) {
+        return [];
+    }
+
+    const payoutIds = eligiblePayouts.map((payout) => payout.id);
+
+    await prisma.vendorPayout.updateMany({
+        where: {
+            id: {
+                in: payoutIds,
+            },
+        },
+        data: {
+            status: 'AVAILABLE',
+        },
+    });
+
+    for (const payout of eligiblePayouts) {
+        await createAuditLog({
+            action: 'PAYOUT_RELEASED',
+            entityType: 'VENDOR_PAYOUT',
+            entityId: payout.id,
+            metadata: {
+                orderId: payout.orderId,
+                vendorId: payout.vendorId,
+                availableAt: payout.availableAt,
+                releasedAt: now,
+            },
+        });
+    }
+
+    return prisma.vendorPayout.findMany({
+        where: {
+            id: {
+                in: payoutIds,
+            },
+        },
+    });
+};
+
 const getVendorPayouts = async (vendorId) => {
     return prisma.vendorPayout.findMany({
         where: {
@@ -301,6 +383,8 @@ const retryFailedPayout = async (user, payoutId) => {
 
 export const payoutService = {
     createPayoutsForOrder,
+    markPayoutsAvailableForDeliveredOrder,
+    releaseEligiblePayouts,
     getVendorPayouts,
     getAllPayouts,
     markPayoutAsPaid,

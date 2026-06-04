@@ -40,6 +40,15 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return sendResponse(res, 200, 'Order cancelled successfully.', result);
 });
 
+const markOrderAsDelivered = asyncHandler(async (req, res) => {
+    const result = await orderService.markOrderAsDelivered(
+        req.user,
+        req.params.orderId,
+    );
+
+    return sendResponse(res, 200, 'Order marked as delivered successfully.', result);
+});
+
 const getOrderStatusHistory = asyncHandler(async (req, res) => {
     const result = await orderService.getOrderStatusHistory(
         req.user,
@@ -60,5 +69,6 @@ export const orderController = {
     getOrderById,
     getVendorOrders,
     cancelOrder,
+    markOrderAsDelivered,
     getOrderStatusHistory,
 };
