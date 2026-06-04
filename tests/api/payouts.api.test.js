@@ -120,7 +120,8 @@ describe('Payout API', () => {
                 grossAmount: 100,
                 platformFee: 10,
                 payoutAmount: 90,
-                status: 'PENDING',
+                status: 'ON_HOLD',
+                holdReason: 'PAYMENT_CAPTURED',
             },
         });
 
@@ -150,7 +151,22 @@ describe('Payout API', () => {
         expect(response.body.data).toHaveLength(1);
     });
 
-    it('allows admin to mark payout as paid and queues email', async () => {
+    it('rejects marking an on-hold payout as paid', async () => {
+        const response = await request(app)
+            .patch(`/api/v1/payouts/${payout.id}/pay`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+        expect(response.status).toBe(400);
+        expect(response.body.success).toBe(false);
+        expect(mockAddPayoutPaidEmailJob).not.toHaveBeenCalled();
+    });
+
+    it('allows admin to mark payout as paid when pending and queues email', async () => {
+        await prisma.vendorPayout.update({
+            where: { id: payout.id },
+            data: { status: 'PENDING' },
+        });
+
         const response = await request(app)
             .patch(`/api/v1/payouts/${payout.id}/pay`)
             .set('Authorization', `Bearer ${adminToken}`);
@@ -217,6 +233,11 @@ describe('Payout API', () => {
     });
 
     it('rejects retry when payout is not failed', async () => {
+        await prisma.vendorPayout.update({
+            where: { id: payout.id },
+            data: { status: 'ON_HOLD' },
+        });
+
         const response = await request(app)
             .patch(`/api/v1/payouts/${payout.id}/retry`)
             .set('Authorization', `Bearer ${adminToken}`);

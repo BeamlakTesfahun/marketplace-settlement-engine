@@ -15,6 +15,8 @@ describe('Stripe webhook processing', () => {
     beforeEach(async () => {
         jest.clearAllMocks();
 
+        await prisma.auditLog.deleteMany();
+        await prisma.vendorPayout.deleteMany();
         await prisma.webhookEvent.deleteMany();
         await prisma.orderItem.deleteMany();
         await prisma.order.deleteMany();
@@ -90,6 +92,119 @@ describe('Stripe webhook processing', () => {
 
         expect(webhookEvents).toHaveLength(1);
         expect(webhookEvents[0].processed).toBe(true);
+    });
+
+    it('allocates vendor payouts on hold and writes payout-hold audit log on payment', async () => {
+        const customer = await prisma.user.create({
+            data: {
+                fullName: 'Settlement Customer',
+                email: 'settlement-customer@test.com',
+                password: 'hashed-password',
+                role: 'CUSTOMER',
+            },
+        });
+
+        const vendorUser = await prisma.user.create({
+            data: {
+                fullName: 'Settlement Vendor',
+                email: 'settlement-vendor@test.com',
+                password: 'hashed-password',
+                role: 'VENDOR',
+            },
+        });
+
+        const vendor = await prisma.vendor.create({
+            data: {
+                userId: vendorUser.id,
+                storeName: 'Settlement Store',
+                status: 'APPROVED',
+            },
+        });
+
+        const category = await prisma.category.create({
+            data: {
+                name: 'Settlement Category',
+                slug: 'settlement-category',
+            },
+        });
+
+        const product = await prisma.product.create({
+            data: {
+                vendorId: vendor.id,
+                categoryId: category.id,
+                name: 'Settlement Product',
+                slug: 'settlement-product',
+                price: 50,
+                stock: 10,
+                status: 'ACTIVE',
+            },
+        });
+
+        const order = await prisma.order.create({
+            data: {
+                userId: customer.id,
+                totalAmount: 100,
+                status: 'PENDING',
+                paymentStatus: 'PENDING',
+                items: {
+                    create: {
+                        productId: product.id,
+                        vendorId: vendor.id,
+                        quantity: 2,
+                        price: 50,
+                    },
+                },
+            },
+        });
+
+        const event = {
+            id: 'evt_settlement_hold_001',
+            type: 'checkout.session.completed',
+            data: {
+                object: {
+                    metadata: {
+                        orderId: order.id,
+                    },
+                    payment_intent: 'pi_settlement_hold_001',
+                },
+            },
+        };
+
+        await processStripeEvent(event);
+
+        const updatedOrder = await prisma.order.findUnique({
+            where: { id: order.id },
+        });
+
+        expect(updatedOrder.paymentStatus).toBe('PAID');
+        expect(updatedOrder.status).toBe('CONFIRMED');
+
+        const payouts = await prisma.vendorPayout.findMany({
+            where: { orderId: order.id },
+        });
+
+        expect(payouts).toHaveLength(1);
+        expect(payouts[0].status).toBe('ON_HOLD');
+        expect(payouts[0].holdReason).toBe('PAYMENT_CAPTURED');
+        expect(Number(payouts[0].grossAmount)).toBe(100);
+        expect(Number(payouts[0].platformFee)).toBe(10);
+        expect(Number(payouts[0].payoutAmount)).toBe(90);
+        expect(payouts[0].availableAt).toBeNull();
+
+        const holdAudit = await prisma.auditLog.findFirst({
+            where: {
+                action: 'PAYOUT_ALLOCATED_ON_HOLD',
+                entityId: order.id,
+            },
+        });
+
+        expect(holdAudit).toBeTruthy();
+        expect(holdAudit.entityType).toBe('ORDER');
+        expect(holdAudit.metadata.payouts).toHaveLength(1);
+        expect(holdAudit.metadata.payouts[0].status).toBe('ON_HOLD');
+        expect(holdAudit.metadata.payouts[0].holdReason).toBe(
+            'PAYMENT_CAPTURED',
+        );
     });
 
     it('does not process the same Stripe event twice', async () => {

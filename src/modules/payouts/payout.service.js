@@ -62,6 +62,14 @@ const markPayoutAsPaid = async (user, payoutId) => {
         throw new AppError('Payout not found.', 404, 'PAYOUT_NOT_FOUND');
     }
 
+    if (payout.status === 'ON_HOLD') {
+        throw new AppError(
+            'Payout is on hold and cannot be paid yet.',
+            400,
+            'PAYOUT_ON_HOLD',
+        );
+    }
+
     if (payout.status !== 'PENDING') {
         throw new AppError(
             'Only pending payouts can be marked as paid.',
@@ -134,11 +142,11 @@ const markPayoutAsFailed = async (user, payoutId, reason) => {
         throw new AppError('Payout not found.', 404, 'PAYOUT_NOT_FOUND');
     }
 
-    if (payout.status !== 'PENDING') {
+    if (payout.status !== 'ON_HOLD' && payout.status !== 'PENDING') {
         throw new AppError(
-            'Only pending payouts can be marked as failed.',
+            'Only on-hold or pending payouts can be marked as failed.',
             400,
-            'PAYOUT_NOT_PENDING',
+            'PAYOUT_NOT_FAILABLE',
         );
     }
 
@@ -176,6 +184,8 @@ const markPayoutAsFailed = async (user, payoutId, reason) => {
 
     return updatedPayout;
 };
+const PAYOUT_HOLD_REASON_PAYMENT = 'PAYMENT_CAPTURED';
+
 const createPayoutsForOrder = async (tx, order) => {
     const vendorTotals = new Map();
 
@@ -188,22 +198,29 @@ const createPayoutsForOrder = async (tx, order) => {
         );
     }
 
+    const createdPayouts = [];
+
     for (const [vendorId, grossAmount] of vendorTotals.entries()) {
         const platformFee = (grossAmount * PLATFORM_FEE_PERCENTAGE) / 100;
 
         const payoutAmount = grossAmount - platformFee;
 
-        await tx.vendorPayout.create({
+        const payout = await tx.vendorPayout.create({
             data: {
                 vendorId,
                 orderId: order.id,
                 grossAmount,
                 platformFee,
                 payoutAmount,
-                status: 'PENDING',
+                status: 'ON_HOLD',
+                holdReason: PAYOUT_HOLD_REASON_PAYMENT,
             },
         });
+
+        createdPayouts.push(payout);
     }
+
+    return createdPayouts;
 };
 
 const getVendorPayouts = async (vendorId) => {
