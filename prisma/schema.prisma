@@ -80,6 +80,7 @@ enum CouponStatus {
 
 enum PayoutStatus {
   ON_HOLD
+  AVAILABLE
   PENDING
   PAID
   FAILED

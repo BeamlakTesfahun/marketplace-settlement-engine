@@ -1,14 +1,26 @@
 import { prisma } from '../../config/prisma.js';
-
-const PLATFORM_FEE_PERCENTAGE = 10;
-
 import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
-
 import {
     addPayoutPaidEmailJob,
     addPayoutFailedEmailJob,
 } from '../../jobs/producers/email.producer.js';
+
+const PLATFORM_FEE_PERCENTAGE = 10;
+const PAYOUT_HOLD_REASON_PAYMENT = 'PAYMENT_CAPTURED';
+
+const isPayoutPayable = (status) =>
+    status === 'AVAILABLE' || status === 'PENDING';
+
+const isPayoutFailurable = (status) =>
+    status === 'ON_HOLD' || status === 'AVAILABLE' || status === 'PENDING';
+
+const resolveRetryStatus = (payout) => {
+    const isEligibleForAvailable =
+        payout.availableAt && payout.availableAt <= new Date();
+
+    return isEligibleForAvailable ? 'AVAILABLE' : 'ON_HOLD';
+};
 
 const getAllPayouts = async (user) => {
     if (user.role !== 'ADMIN') {
@@ -70,11 +82,11 @@ const markPayoutAsPaid = async (user, payoutId) => {
         );
     }
 
-    if (payout.status !== 'PENDING') {
+    if (!isPayoutPayable(payout.status)) {
         throw new AppError(
-            'Only pending payouts can be marked as paid.',
+            'Only available payouts can be marked as paid.',
             400,
-            'PAYOUT_NOT_PENDING',
+            'PAYOUT_NOT_PAYABLE',
         );
     }
 
@@ -142,9 +154,9 @@ const markPayoutAsFailed = async (user, payoutId, reason) => {
         throw new AppError('Payout not found.', 404, 'PAYOUT_NOT_FOUND');
     }
 
-    if (payout.status !== 'ON_HOLD' && payout.status !== 'PENDING') {
+    if (!isPayoutFailurable(payout.status)) {
         throw new AppError(
-            'Only on-hold or pending payouts can be marked as failed.',
+            'Only on-hold or available payouts can be marked as failed.',
             400,
             'PAYOUT_NOT_FAILABLE',
         );
@@ -184,7 +196,6 @@ const markPayoutAsFailed = async (user, payoutId, reason) => {
 
     return updatedPayout;
 };
-const PAYOUT_HOLD_REASON_PAYMENT = 'PAYMENT_CAPTURED';
 
 const createPayoutsForOrder = async (tx, order) => {
     const vendorTotals = new Map();
@@ -202,7 +213,6 @@ const createPayoutsForOrder = async (tx, order) => {
 
     for (const [vendorId, grossAmount] of vendorTotals.entries()) {
         const platformFee = (grossAmount * PLATFORM_FEE_PERCENTAGE) / 100;
-
         const payoutAmount = grossAmount - platformFee;
 
         const payout = await tx.vendorPayout.create({
@@ -260,12 +270,14 @@ const retryFailedPayout = async (user, payoutId) => {
         );
     }
 
+    const nextStatus = resolveRetryStatus(payout);
+
     const updatedPayout = await prisma.vendorPayout.update({
         where: {
             id: payoutId,
         },
         data: {
-            status: 'PENDING',
+            status: nextStatus,
             failureReason: null,
         },
     });
@@ -279,6 +291,8 @@ const retryFailedPayout = async (user, payoutId) => {
             vendorId: payout.vendorId,
             orderId: payout.orderId,
             payoutAmount: Number(payout.payoutAmount),
+            previousStatus: payout.status,
+            nextStatus,
         },
     });
 

@@ -161,10 +161,10 @@ describe('Payout API', () => {
         expect(mockAddPayoutPaidEmailJob).not.toHaveBeenCalled();
     });
 
-    it('allows admin to mark payout as paid when pending and queues email', async () => {
+    it('allows admin to mark payout as paid when available and queues email', async () => {
         await prisma.vendorPayout.update({
             where: { id: payout.id },
-            data: { status: 'PENDING' },
+            data: { status: 'AVAILABLE' },
         });
 
         const response = await request(app)
@@ -228,7 +228,7 @@ describe('Payout API', () => {
 
         expect(response.status).toBe(200);
         expect(response.body.success).toBe(true);
-        expect(response.body.data.status).toBe('PENDING');
+        expect(response.body.data.status).toBe('ON_HOLD');
         expect(response.body.data.failureReason).toBeNull();
     });
 
