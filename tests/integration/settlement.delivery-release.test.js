@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import request from 'supertest';
 
 const mockAddOrderConfirmationEmailJob = jest.fn();
 const mockAddPayoutPaidEmailJob = jest.fn();
@@ -12,11 +13,15 @@ jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addPayoutFailedEmailJob: jest.fn(),
 }));
 
+const { default: app } = await import('../../src/app.js');
 const { prisma } = await import('../../src/config/prisma.js');
+const { generateToken } = await import('../../src/utils/generateToken.js');
 const { processStripeEvent } =
     await import('../../src/modules/webhook/webhook.service.js');
-const { orderService } = await import('../../src/modules/orders/order.service.js');
-const { payoutService } = await import('../../src/modules/payouts/payout.service.js');
+const { orderService } =
+    await import('../../src/modules/orders/order.service.js');
+const { payoutService } =
+    await import('../../src/modules/payouts/payout.service.js');
 
 describe('Settlement delivery and payout release', () => {
     let customer;
@@ -24,6 +29,7 @@ describe('Settlement delivery and payout release', () => {
     let vendorUser;
     let vendor;
     let order;
+    let vendorToken;
 
     beforeEach(async () => {
         jest.clearAllMocks();
@@ -72,6 +78,8 @@ describe('Settlement delivery and payout release', () => {
                 status: 'APPROVED',
             },
         });
+
+        vendorToken = generateToken(vendorUser.id);
 
         const category = await prisma.category.create({
             data: {
@@ -135,7 +143,37 @@ describe('Settlement delivery and payout release', () => {
         expect(payouts[0].availableAt).toBeNull();
     });
 
-    it('sets availableAt when order is marked delivered', async () => {
+    it('marks order delivered via API and sets availableAt', async () => {
+        const response = await request(app)
+            .patch(`/api/v1/orders/${order.id}/deliver`)
+            .set('Authorization', `Bearer ${vendorToken}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.data.status).toBe('DELIVERED');
+        expect(response.body.data.deliveredAt).toBeTruthy();
+
+        const payout = await prisma.vendorPayout.findFirst({
+            where: { orderId: order.id },
+        });
+
+        expect(payout.status).toBe('ON_HOLD');
+        expect(payout.availableAt).toBeTruthy();
+        expect(payout.availableAt.getTime()).toBeGreaterThan(
+            new Date(response.body.data.deliveredAt).getTime(),
+        );
+
+        const deliveryAudit = await prisma.auditLog.findFirst({
+            where: {
+                action: 'ORDER_DELIVERED',
+                entityId: order.id,
+            },
+        });
+
+        expect(deliveryAudit).toBeTruthy();
+    });
+
+    it('sets availableAt when order is marked delivered via service', async () => {
         const deliveredOrder = await orderService.markOrderAsDelivered(
             vendorUser,
             order.id,
@@ -205,10 +243,23 @@ describe('Settlement delivery and payout release', () => {
             where: { orderId: order.id },
         });
 
-        const paidPayout = await payoutService.markPayoutAsPaid(admin, payout.id);
+        const paidPayout = await payoutService.markPayoutAsPaid(
+            admin,
+            payout.id,
+        );
 
         expect(paidPayout.status).toBe('PAID');
         expect(paidPayout.paidAt).toBeTruthy();
         expect(mockAddPayoutPaidEmailJob).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects marking ON_HOLD payout as paid', async () => {
+        const payout = await prisma.vendorPayout.findFirst({
+            where: { orderId: order.id },
+        });
+
+        await expect(
+            payoutService.markPayoutAsPaid(admin, payout.id),
+        ).rejects.toThrow('Payout is on hold and cannot be paid yet.');
     });
 });

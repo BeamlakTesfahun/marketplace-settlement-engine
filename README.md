@@ -326,11 +326,13 @@ Admin creates coupon
 ### Vendor Payout Flow
 
 ```text
-Successful payment creates pending vendor payouts
-→ admin marks payout as PAID or FAILED
-→ vendor receives payout notification email
-→ failed payouts can be retried
-→ audit logs track payout actions
+Successful payment creates ON_HOLD vendor payouts
+→ vendor or admin marks order DELIVERED (PATCH /api/v1/orders/:orderId/deliver)
+→ deliveredAt is set and each ON_HOLD payout gets availableAt after the dispute window
+→ releaseEligiblePayouts moves ON_HOLD payouts to AVAILABLE when availableAt has passed
+→ only AVAILABLE payouts can be marked PAID by admin
+→ failed payouts can be retried back to ON_HOLD or AVAILABLE
+→ audit logs track delivery, release, and payout actions
 ```
 
 ---

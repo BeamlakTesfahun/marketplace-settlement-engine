@@ -16,11 +16,10 @@ const addDays = (date, days) => {
     return result;
 };
 
-const isPayoutPayable = (status) =>
-    status === 'AVAILABLE' || status === 'PENDING';
+const isPayoutPayable = (status) => status === 'AVAILABLE';
 
 const isPayoutFailurable = (status) =>
-    status === 'ON_HOLD' || status === 'AVAILABLE' || status === 'PENDING';
+    status === 'ON_HOLD' || status === 'AVAILABLE';
 
 const resolveRetryStatus = (payout) => {
     const isEligibleForAvailable =

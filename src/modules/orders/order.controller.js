@@ -46,7 +46,12 @@ const markOrderAsDelivered = asyncHandler(async (req, res) => {
         req.params.orderId,
     );
 
-    return sendResponse(res, 200, 'Order marked as delivered successfully.', result);
+    return sendResponse(
+        res,
+        200,
+        'Order marked as delivered successfully.',
+        result,
+    );
 });
 
 const getOrderStatusHistory = asyncHandler(async (req, res) => {
