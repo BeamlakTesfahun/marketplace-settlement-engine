@@ -5,6 +5,7 @@ import {
     addPayoutPaidEmailJob,
     addPayoutFailedEmailJob,
 } from '../../jobs/producers/email.producer.js';
+import { OPEN_DISPUTE_STATUSES } from '../disputes/dispute.service.js';
 
 const PLATFORM_FEE_PERCENTAGE = 10;
 const PAYOUT_HOLD_REASON_PAYMENT = 'PAYMENT_CAPTURED';
@@ -73,6 +74,17 @@ const markPayoutAsPaid = async (user, payoutId) => {
                     },
                 },
             },
+            order: {
+                include: {
+                    disputes: {
+                        where: {
+                            status: {
+                                in: OPEN_DISPUTE_STATUSES,
+                            },
+                        },
+                    },
+                },
+            },
         },
     });
 
@@ -94,6 +106,20 @@ const markPayoutAsPaid = async (user, payoutId) => {
             400,
             'PAYOUT_NOT_PAYABLE',
         );
+    }
+
+    if (payout.order.disputes.length > 0) {
+        const hasOpenVendorDispute = payout.order.disputes.some(
+            (dispute) => dispute.vendorId === payout.vendorId,
+        );
+
+        if (hasOpenVendorDispute) {
+            throw new AppError(
+                'Payout cannot be paid while the order has an open dispute.',
+                400,
+                'PAYOUT_BLOCKED_BY_DISPUTE',
+            );
+        }
     }
 
     const updatedPayout = await prisma.vendorPayout.update({
@@ -265,33 +291,80 @@ const markPayoutsAvailableForDeliveredOrder = async (
 };
 
 const releaseEligiblePayouts = async (now = new Date()) => {
-    const eligiblePayouts = await prisma.vendorPayout.findMany({
+    const candidatePayouts = await prisma.vendorPayout.findMany({
         where: {
             status: 'ON_HOLD',
             availableAt: {
                 lte: now,
             },
         },
+        include: {
+            order: {
+                include: {
+                    disputes: {
+                        where: {
+                            status: {
+                                in: OPEN_DISPUTE_STATUSES,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    const eligiblePayouts = candidatePayouts.filter((payout) => {
+        return !payout.order.disputes.some(
+            (dispute) => dispute.vendorId === payout.vendorId,
+        );
     });
 
     if (eligiblePayouts.length === 0) {
         return [];
     }
 
-    const payoutIds = eligiblePayouts.map((payout) => payout.id);
+    const releasedPayoutIds = [];
 
-    await prisma.vendorPayout.updateMany({
+    for (const payout of eligiblePayouts) {
+        const result = await prisma.vendorPayout.updateMany({
+            where: {
+                id: payout.id,
+                status: 'ON_HOLD',
+                order: {
+                    disputes: {
+                        none: {
+                            vendorId: payout.vendorId,
+                            status: {
+                                in: OPEN_DISPUTE_STATUSES,
+                            },
+                        },
+                    },
+                },
+            },
+            data: {
+                status: 'AVAILABLE',
+            },
+        });
+
+        if (result.count > 0) {
+            releasedPayoutIds.push(payout.id);
+        }
+    }
+
+    if (releasedPayoutIds.length === 0) {
+        return [];
+    }
+
+    const releasedPayouts = await prisma.vendorPayout.findMany({
         where: {
             id: {
-                in: payoutIds,
+                in: releasedPayoutIds,
             },
-        },
-        data: {
             status: 'AVAILABLE',
         },
     });
 
-    for (const payout of eligiblePayouts) {
+    for (const payout of releasedPayouts) {
         await createAuditLog({
             action: 'PAYOUT_RELEASED',
             entityType: 'VENDOR_PAYOUT',
@@ -305,13 +378,7 @@ const releaseEligiblePayouts = async (now = new Date()) => {
         });
     }
 
-    return prisma.vendorPayout.findMany({
-        where: {
-            id: {
-                in: payoutIds,
-            },
-        },
-    });
+    return releasedPayouts;
 };
 
 const getVendorPayouts = async (vendorId) => {
@@ -326,6 +393,32 @@ const getVendorPayouts = async (vendorId) => {
             createdAt: 'desc',
         },
     });
+};
+
+const getMyVendorPayouts = async (user) => {
+    if (user.role !== 'VENDOR') {
+        throw new AppError(
+            'Only vendors can view their payouts.',
+            403,
+            'FORBIDDEN',
+        );
+    }
+
+    const vendor = await prisma.vendor.findUnique({
+        where: {
+            userId: user.id,
+        },
+    });
+
+    if (!vendor) {
+        throw new AppError(
+            'Vendor profile not found.',
+            404,
+            'VENDOR_PROFILE_NOT_FOUND',
+        );
+    }
+
+    return getVendorPayouts(vendor.id);
 };
 
 const retryFailedPayout = async (user, payoutId) => {
@@ -351,7 +444,18 @@ const retryFailedPayout = async (user, payoutId) => {
         );
     }
 
-    const nextStatus = resolveRetryStatus(payout);
+    const openDisputeCount = await prisma.orderDispute.count({
+        where: {
+            orderId: payout.orderId,
+            vendorId: payout.vendorId,
+            status: {
+                in: OPEN_DISPUTE_STATUSES,
+            },
+        },
+    });
+
+    const nextStatus =
+        openDisputeCount > 0 ? 'ON_HOLD' : resolveRetryStatus(payout);
 
     const updatedPayout = await prisma.vendorPayout.update({
         where: {
@@ -385,6 +489,7 @@ export const payoutService = {
     markPayoutsAvailableForDeliveredOrder,
     releaseEligiblePayouts,
     getVendorPayouts,
+    getMyVendorPayouts,
     getAllPayouts,
     markPayoutAsPaid,
     markPayoutAsFailed,

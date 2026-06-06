@@ -11,6 +11,8 @@ jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addRefundRejectedEmailJob: jest.fn(),
     addPayoutPaidEmailJob: mockAddPayoutPaidEmailJob,
     addPayoutFailedEmailJob: jest.fn(),
+    addDisputeOpenedEmailJob: jest.fn(),
+    addDisputeVendorRespondedEmailJob: jest.fn(),
 }));
 
 const { default: app } = await import('../../src/app.js');

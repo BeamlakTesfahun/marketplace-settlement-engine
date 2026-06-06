@@ -3,7 +3,7 @@ import { sendResponse } from '../../utils/sendResponse.js';
 import { payoutService } from './payout.service.js';
 
 const getMyPayouts = asyncHandler(async (req, res) => {
-    const result = await payoutService.getVendorPayouts(req.vendor.id);
+    const result = await payoutService.getMyVendorPayouts(req.user);
 
     return sendResponse(
         res,

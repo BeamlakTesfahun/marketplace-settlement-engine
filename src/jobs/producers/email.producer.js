@@ -97,3 +97,35 @@ export const addPayoutFailedEmailJob = async (payload) => {
         removeOnFail: false,
     });
 };
+
+export const addDisputeOpenedEmailJob = async (payload) => {
+    return emailQueue.add('dispute-opened-email', payload, {
+        jobId: `dispute-opened-${payload.disputeId}`,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: {
+            age: 3600,
+            count: 1000,
+        },
+        removeOnFail: false,
+    });
+};
+
+export const addDisputeVendorRespondedEmailJob = async (payload) => {
+    return emailQueue.add('dispute-vendor-responded-email', payload, {
+        jobId: `dispute-vendor-responded-${payload.disputeId}`,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: {
+            age: 3600,
+            count: 1000,
+        },
+        removeOnFail: false,
+    });
+};

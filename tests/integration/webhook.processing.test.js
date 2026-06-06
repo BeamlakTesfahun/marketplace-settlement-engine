@@ -4,6 +4,13 @@ const mockAddOrderConfirmationEmailJob = jest.fn();
 
 jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addOrderConfirmationEmailJob: mockAddOrderConfirmationEmailJob,
+    addRefundRequestedEmailJob: jest.fn(),
+    addRefundApprovedEmailJob: jest.fn(),
+    addRefundRejectedEmailJob: jest.fn(),
+    addPayoutPaidEmailJob: jest.fn(),
+    addPayoutFailedEmailJob: jest.fn(),
+    addDisputeOpenedEmailJob: jest.fn(),
+    addDisputeVendorRespondedEmailJob: jest.fn(),
 }));
 
 const { prisma } = await import('../../src/config/prisma.js');

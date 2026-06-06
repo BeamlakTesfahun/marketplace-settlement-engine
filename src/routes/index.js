@@ -8,6 +8,7 @@ import orderRoutes from '../modules/orders/order.routes.js';
 import refundRoutes from '../modules/refunds/refund.routes.js';
 import auditRoutes from '../modules/audit/audit.routes.js';
 import payoutRoutes from '../modules/payouts/payout.routes.js';
+import disputeRoutes from '../modules/disputes/dispute.routes.js';
 
 import couponRoutes from '../modules/coupons/coupon.routes.js';
 
@@ -20,6 +21,7 @@ router.use('/products', productRoutes);
 router.use('/cart', cartRoutes);
 router.use('/orders', orderRoutes);
 router.use('/refunds', refundRoutes);
+router.use('/disputes', disputeRoutes);
 router.use('/audit-logs', auditRoutes);
 
 router.use('/coupons', couponRoutes);
