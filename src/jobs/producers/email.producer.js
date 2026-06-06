@@ -129,3 +129,19 @@ export const addDisputeVendorRespondedEmailJob = async (payload) => {
         removeOnFail: false,
     });
 };
+
+export const addDisputeResolvedEmailJob = async (payload) => {
+    return emailQueue.add('dispute-resolved-email', payload, {
+        jobId: `dispute-resolved-${payload.disputeId}-${payload.recipientType}`,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: {
+            age: 3600,
+            count: 1000,
+        },
+        removeOnFail: false,
+    });
+};
