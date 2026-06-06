@@ -27,7 +27,19 @@ const respondToDispute = asyncHandler(async (req, res) => {
     );
 });
 
+const resolveDispute = asyncHandler(async (req, res) => {
+    const result = await disputeService.resolveDispute(
+        req.user,
+        req.params.orderId,
+        req.params.vendorId,
+        req.validatedData.body,
+    );
+
+    return sendResponse(res, 200, 'Dispute resolved successfully.', result);
+});
+
 export const disputeController = {
     openDispute,
     respondToDispute,
+    resolveDispute,
 };

@@ -1,9 +1,11 @@
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
+
 import {
     addDisputeOpenedEmailJob,
     addDisputeVendorRespondedEmailJob,
+    addDisputeResolvedEmailJob,
 } from '../../jobs/producers/email.producer.js';
 
 export const OPEN_DISPUTE_STATUSES = [
@@ -257,7 +259,273 @@ const respondToDispute = async (user, orderId, payload) => {
     return updatedDispute;
 };
 
+const TERMINAL_DISPUTE_STATUSES = [
+    'RESOLVED_REFUND',
+    'RESOLVED_RELEASE_PAYOUT',
+    'REJECTED',
+];
+
+const resolveDispute = async (user, orderId, vendorId, payload) => {
+    if (user.role !== 'ADMIN') {
+        throw new AppError(
+            'Only admins can resolve disputes.',
+            403,
+            'FORBIDDEN',
+        );
+    }
+
+    const dispute = await prisma.orderDispute.findUnique({
+        where: {
+            orderId_vendorId: {
+                orderId,
+                vendorId,
+            },
+        },
+        include: {
+            openedBy: {
+                select: {
+                    email: true,
+                    fullName: true,
+                },
+            },
+            vendor: {
+                include: {
+                    user: {
+                        select: {
+                            email: true,
+                            fullName: true,
+                        },
+                    },
+                },
+            },
+            order: true,
+        },
+    });
+
+    if (!dispute) {
+        throw new AppError(
+            'Dispute not found.',
+            404,
+            'ORDER_DISPUTE_NOT_FOUND',
+        );
+    }
+
+    if (TERMINAL_DISPUTE_STATUSES.includes(dispute.status)) {
+        throw new AppError(
+            'This dispute has already been resolved.',
+            400,
+            'DISPUTE_ALREADY_RESOLVED',
+        );
+    }
+
+    const payout = await prisma.vendorPayout.findUnique({
+        where: {
+            orderId_vendorId: {
+                orderId,
+                vendorId,
+            },
+        },
+    });
+
+    if (!payout) {
+        throw new AppError(
+            'Vendor payout not found for this dispute.',
+            404,
+            'VENDOR_PAYOUT_NOT_FOUND',
+        );
+    }
+
+    const payoutGrossAmount = Number(payout.grossAmount);
+
+    if (
+        payload.resolution === 'PARTIAL_REFUND' &&
+        Number(payload.refundAmount) > payoutGrossAmount
+    ) {
+        throw new AppError(
+            'Partial refund amount cannot exceed the vendor payout gross amount.',
+            400,
+            'REFUND_AMOUNT_EXCEEDS_VENDOR_AMOUNT',
+        );
+    }
+
+    const now = new Date();
+
+    const result = await prisma.$transaction(async (tx) => {
+        if (
+            payload.resolution === 'REFUND' ||
+            payload.resolution === 'PARTIAL_REFUND'
+        ) {
+            const refundAmount =
+                payload.resolution === 'REFUND'
+                    ? payoutGrossAmount
+                    : Number(payload.refundAmount);
+
+            const updatedDispute = await tx.orderDispute.update({
+                where: {
+                    id: dispute.id,
+                },
+                data: {
+                    status: 'RESOLVED_REFUND',
+                    underReviewAt: dispute.underReviewAt ?? now,
+                    resolvedAt: now,
+                },
+            });
+
+            const updatedPayout = await tx.vendorPayout.update({
+                where: {
+                    id: payout.id,
+                },
+                data: {
+                    status: 'ON_HOLD',
+                    holdReason: 'DISPUTE_REFUNDED',
+                },
+            });
+
+            const updatedOrder = await tx.order.update({
+                where: {
+                    id: orderId,
+                },
+                data: {
+                    refundStatus: 'PROCESSING',
+                    refundAmount,
+                    refundProcessedAt: now,
+                },
+            });
+
+            await createAuditLog({
+                userId: user.id,
+                action: 'ORDER_DISPUTE_RESOLVED_REFUND',
+                entityType: 'ORDER_DISPUTE',
+                entityId: dispute.id,
+                metadata: {
+                    orderId,
+                    vendorId,
+                    payoutId: payout.id,
+                    previousStatus: dispute.status,
+                    nextStatus: updatedDispute.status,
+                    resolution: payload.resolution,
+                    refundAmount,
+                    note: payload.note,
+                },
+            });
+
+            return {
+                dispute: updatedDispute,
+                payout: updatedPayout,
+                order: updatedOrder,
+            };
+        }
+
+        if (payload.resolution === 'RELEASE_PAYOUT') {
+            const nextPayoutStatus =
+                payout.availableAt && payout.availableAt <= now
+                    ? 'AVAILABLE'
+                    : 'ON_HOLD';
+
+            const updatedDispute = await tx.orderDispute.update({
+                where: {
+                    id: dispute.id,
+                },
+                data: {
+                    status: 'RESOLVED_RELEASE_PAYOUT',
+                    underReviewAt: dispute.underReviewAt ?? now,
+                    resolvedAt: now,
+                },
+            });
+
+            const updatedPayout = await tx.vendorPayout.update({
+                where: {
+                    id: payout.id,
+                },
+                data: {
+                    status: nextPayoutStatus,
+                    holdReason:
+                        nextPayoutStatus === 'AVAILABLE'
+                            ? null
+                            : 'DISPUTE_RESOLVED_RELEASE',
+                },
+            });
+
+            await createAuditLog({
+                userId: user.id,
+                action: 'ORDER_DISPUTE_RESOLVED_RELEASE_PAYOUT',
+                entityType: 'ORDER_DISPUTE',
+                entityId: dispute.id,
+                metadata: {
+                    orderId,
+                    vendorId,
+                    payoutId: payout.id,
+                    previousStatus: dispute.status,
+                    nextStatus: updatedDispute.status,
+                    previousPayoutStatus: payout.status,
+                    nextPayoutStatus,
+                    note: payload.note,
+                },
+            });
+
+            return {
+                dispute: updatedDispute,
+                payout: updatedPayout,
+            };
+        }
+
+        const updatedDispute = await tx.orderDispute.update({
+            where: {
+                id: dispute.id,
+            },
+            data: {
+                status: 'REJECTED',
+                underReviewAt: dispute.underReviewAt ?? now,
+                resolvedAt: now,
+            },
+        });
+
+        await createAuditLog({
+            userId: user.id,
+            action: 'ORDER_DISPUTE_REJECTED',
+            entityType: 'ORDER_DISPUTE',
+            entityId: dispute.id,
+            metadata: {
+                orderId,
+                vendorId,
+                payoutId: payout.id,
+                previousStatus: dispute.status,
+                nextStatus: updatedDispute.status,
+                note: payload.note,
+            },
+        });
+
+        return {
+            dispute: updatedDispute,
+            payout,
+        };
+    });
+
+    await addDisputeResolvedEmailJob({
+        to: dispute.openedBy.email,
+        recipientType: 'customer',
+        customerName: dispute.openedBy.fullName,
+        disputeId: dispute.id,
+        orderId,
+        vendorId,
+        resolution: payload.resolution,
+    });
+
+    await addDisputeResolvedEmailJob({
+        to: dispute.vendor.user.email,
+        recipientType: 'vendor',
+        vendorName: dispute.vendor.storeName,
+        disputeId: dispute.id,
+        orderId,
+        vendorId,
+        resolution: payload.resolution,
+    });
+
+    return result;
+};
+
 export const disputeService = {
     openDispute,
     respondToDispute,
+    resolveDispute,
 };
