@@ -2,7 +2,27 @@
 
 A production-style backend API for a multi-vendor e-commerce marketplace built with Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, Stripe, and Jest.
 
-This project includes advanced marketplace workflows such as Stripe webhooks, inventory reservations, refund processing, coupon discounts, vendor payouts, audit logging, background jobs, and integration testing.
+Unlike traditional marketplace tutorials that release vendor funds immediately after payment, this project implements a settlement-focused architecture with payout holds, delivery-based release, vendor-specific disputes, dispute resolution workflows, audit logging, and background job processing.
+
+---
+
+## Why This Exists
+
+Most marketplace tutorials release vendor funds immediately after payment succeeds.
+
+Real commerce platforms typically introduce settlement controls between customer payment and vendor payout. Orders may be delivered late, products may arrive damaged, disputes may be opened, and refunds may be required before funds are released.
+
+This project models those operational realities through a settlement-focused architecture.
+
+### Key Goals
+
+- Delayed vendor settlement
+- Delivery-based payout release
+- Vendor-specific dispute handling
+- Refund-aware dispute resolution
+- Auditable financial workflows
+
+Instead of treating payment as the end of the transaction, the platform treats payment as the beginning of a settlement lifecycle that continues until funds are either released to the vendor or redirected through a dispute resolution process.
 
 ---
 
@@ -16,7 +36,10 @@ This project includes advanced marketplace workflows such as Stripe webhooks, in
 - Inventory reservation and stock restoration
 - Refund and cancellation workflows
 - Coupon and discount system
-- Vendor payout calculation and processing
+- Held vendor payouts and settlement controls
+- Delivery-based payout release
+- Vendor-specific disputes
+- Admin dispute resolution workflows
 - Audit logs and order status history
 - BullMQ email queues and workers
 - Bull Board queue dashboard
@@ -56,6 +79,7 @@ src/
 │   ├── carts/
 │   ├── categories/
 │   ├── coupons/
+│   ├── disputes/
 │   ├── orders/
 │   ├── payouts/
 │   ├── products/
@@ -80,6 +104,38 @@ tests/
 ├── integration/
 ├── jobs/
 └── helpers/
+```
+
+---
+
+## Settlement Architecture
+
+```text
+Customer
+    ↓
+Checkout
+    ↓
+Stripe Payment
+    ↓
+Order Confirmed
+    ↓
+Vendor Payout (ON_HOLD)
+    ↓
+Order Delivered
+    ↓
+Dispute Window
+    ↓
+ ┌─────────────────────┐
+ │ Customer Dispute?   │
+ └─────────────────────┘
+      ↓
+  Admin Review
+      ↓
+ ┌─────────┬─────────┬─────────┐
+ │ Refund  │ Release │ Reject  │
+ └─────────┴─────────┴─────────┘
+      ↓
+ Final Settlement
 ```
 
 ---
@@ -142,16 +198,8 @@ npx prisma studio
 
 ## Redis Setup
 
-Using Docker:
-
 ```bash
 docker run -d --name redis-dev -p 6379:6379 redis
-```
-
-Start later:
-
-```bash
-docker start redis-dev
 ```
 
 Verify:
@@ -182,65 +230,6 @@ Start email worker:
 npm run worker:email
 ```
 
-Start inventory cleanup worker if available:
-
-```bash
-npm run worker:inventory-cleanup
-```
-
----
-
-## Stripe Webhook Setup
-
-Install and login to Stripe CLI:
-
-```bash
-stripe login
-```
-
-Forward webhooks:
-
-```bash
-stripe listen --forward-to localhost:4444/api/v1/webhooks/stripe
-```
-
-Copy the generated `whsec_...` value into:
-
-```env
-STRIPE_WEBHOOK_SECRET=whsec_xxxxx
-```
-
-Restart the server after updating `.env`.
-
----
-
-## API Documentation
-
-Swagger docs are available at:
-
-```text
-http://localhost:4444/api/docs
-```
-
----
-
-## BullMQ Dashboard
-
-Bull Board is available at:
-
-```text
-http://localhost:4444/admin/queues
-```
-
-This dashboard is protected using Basic Auth.
-
-Use:
-
-```env
-BULL_BOARD_USERNAME=admin
-BULL_BOARD_PASSWORD=strongpassword
-```
-
 ---
 
 ## Running Tests
@@ -251,18 +240,213 @@ Run all tests:
 npm test
 ```
 
-Debug open handles:
+Run settlement and dispute tests:
 
 ```bash
-npm test -- --detectOpenHandles
+npm test -- tests/integration/dispute-resolution-settlement.test.js --forceExit
+
+npm test -- \
+  tests/integration/order.dispute-payout-freeze.test.js \
+  tests/integration/settlement.delivery-release.test.js \
+  tests/api/payouts.api.test.js \
+  --forceExit
 ```
 
-Most tests require:
+---
 
-- PostgreSQL running
-- Redis running
+## Settlement & Dispute Resolution Workflow
 
-Supertest imports the Express app directly, so the API server usually does not need to be running for automated tests.
+### Settlement Holds
+
+Successful payments do not immediately create payable vendor balances.
+
+```text
+Payment Success
+      ↓
+Order Confirmed
+      ↓
+Vendor Payout Created
+      ↓
+Status = ON_HOLD
+```
+
+Payouts remain frozen until delivery and dispute conditions are satisfied.
+
+---
+
+### Delivery-Based Release
+
+```text
+Order Delivered
+      ↓
+availableAt Calculated
+      ↓
+Dispute Window Expires
+      ↓
+AVAILABLE Payout
+```
+
+Rules:
+
+- Only delivered orders become settlement eligible
+- Only AVAILABLE payouts may be marked PAID
+- Settlement actions are audited
+- Release processing is automated through settlement services
+
+---
+
+### Vendor-Specific Disputes
+
+Disputes are tied to:
+
+```text
+Order + Vendor
+```
+
+This allows multi-vendor orders to be handled independently.
+
+Example:
+
+```text
+Order #100
+├─ Vendor A payout
+└─ Vendor B payout
+```
+
+A dispute against Vendor A does not affect Vendor B.
+
+#### Dispute Lifecycle
+
+```text
+OPEN
+    ↓
+VENDOR_RESPONDED
+    ↓
+UNDER_REVIEW
+```
+
+Resolution outcomes:
+
+```text
+RESOLVED_REFUND
+RESOLVED_RELEASE_PAYOUT
+REJECTED
+```
+
+#### Settlement Freeze Rules
+
+Open disputes freeze settlement actions.
+
+Blocked operations:
+
+```text
+releaseEligiblePayouts
+markPayoutAsPaid
+retryFailedPayout
+```
+
+while dispute status is:
+
+```text
+OPEN
+VENDOR_RESPONDED
+UNDER_REVIEW
+```
+
+---
+
+### Dispute Resolution
+
+Administrators resolve disputes using one of four outcomes:
+
+```text
+REFUND
+PARTIAL_REFUND
+RELEASE_PAYOUT
+REJECT
+```
+
+#### Full Refund
+
+```text
+Dispute
+    ↓
+RESOLVED_REFUND
+    ↓
+Refund Recorded
+    ↓
+Payout Remains ON_HOLD
+```
+
+Effects:
+
+- Refund state updated
+- Audit log recorded
+- Customer notified
+- Vendor notified
+
+---
+
+#### Partial Refund
+
+```text
+Dispute
+    ↓
+RESOLVED_REFUND
+    ↓
+Partial Refund Recorded
+    ↓
+Payout Remains ON_HOLD
+```
+
+Effects:
+
+- Partial refund amount stored
+- Settlement remains blocked
+
+---
+
+#### Release Vendor Payout
+
+```text
+Dispute
+    ↓
+RESOLVED_RELEASE_PAYOUT
+    ↓
+Payout Eligible For Settlement
+```
+
+If:
+
+```text
+availableAt <= now
+```
+
+then:
+
+```text
+ON_HOLD
+    ↓
+AVAILABLE
+```
+
+and the payout may continue through normal settlement processing.
+
+---
+
+#### Reject Dispute
+
+```text
+Dispute
+    ↓
+REJECTED
+```
+
+Effects:
+
+- Dispute closed
+- Payout no longer blocked
+- Normal payout release flow resumes
 
 ---
 
@@ -286,18 +470,8 @@ Stripe sends checkout.session.completed
 → duplicate event is ignored if already processed
 → order is marked CONFIRMED and PAID
 → inventory reservation is confirmed
-→ vendor payouts are generated
+→ vendor payouts are generated as ON_HOLD
 → confirmation email job is queued
-```
-
-### Checkout Expiration Flow
-
-```text
-Stripe sends checkout.session.expired
-→ active reservation is released
-→ stock is restored
-→ order is cancelled
-→ audit log is created
 ```
 
 ### Refund Flow
@@ -318,174 +492,89 @@ Customer requests refund
 ```text
 Admin creates coupon
 → customer submits coupon during checkout
-→ system validates status, expiration, usage limit, per-user limit, and vendor rules
+→ system validates status, expiration, usage limits, and vendor rules
 → discount is applied
 → coupon usage is recorded
 ```
 
-### Vendor Payout Flow
+---
+
+## API Documentation
+
+Swagger docs:
 
 ```text
-Successful payment creates ON_HOLD vendor payouts
-→ vendor or admin marks order DELIVERED (PATCH /api/v1/orders/:orderId/deliver)
-→ deliveredAt is set and each ON_HOLD payout gets availableAt after the dispute window
-→ releaseEligiblePayouts moves ON_HOLD payouts to AVAILABLE when availableAt has passed
-→ only AVAILABLE payouts can be marked PAID by admin
-→ failed payouts can be retried back to ON_HOLD or AVAILABLE
-→ audit logs track delivery, release, and payout actions
+http://localhost:4444/api/docs
 ```
 
 ---
 
-## Important Architecture Decisions
+## BullMQ Dashboard
+
+Bull Board:
+
+```text
+http://localhost:4444/admin/queues
+```
+
+Protected with:
+
+```env
+BULL_BOARD_USERNAME=admin
+BULL_BOARD_PASSWORD=strongpassword
+```
+
+---
+
+## Architecture Decisions
 
 ### Webhook Idempotency
 
-Stripe may send the same webhook more than once.
+Stripe may send the same webhook multiple times.
 
-This project prevents duplicate processing using:
+Protection mechanisms:
 
-- `WebhookEvent` records
-- unique Stripe event IDs
-- order payment status checks
-- unique BullMQ job IDs
+- WebhookEvent records
+- Unique Stripe event IDs
+- Payment status checks
+- Unique BullMQ job IDs
 
 ### Inventory Reservation
 
-Stock is reserved during checkout instead of waiting for payment success.
+Inventory is reserved during checkout instead of after payment.
 
-This prevents overselling while also allowing stock restoration when:
+This prevents overselling while still allowing stock restoration when:
 
-- checkout expires
-- unpaid order is cancelled
-- refund is approved
-
-### Background Jobs
-
-Email delivery is handled asynchronously through BullMQ.
-
-Supported email jobs include:
-
-- order confirmation emails
-- refund requested emails
-- refund approved emails
-- refund rejected emails
-- payout paid emails
-- payout failed emails
+- Checkout expires
+- Orders are cancelled
+- Refunds are approved
 
 ### Audit Logging
 
-Important system actions are recorded, including:
+Important settlement actions are recorded, including:
 
-- checkout creation
-- order cancellation
-- refund request
-- refund approval
-- refund rejection
-- webhook processing
-- inventory release
-- payout paid
-- payout failed
-- payout retry
+- Order delivery
+- Payout release
+- Payout paid
+- Payout retry
+- Dispute opened
+- Vendor response
+- Refund resolution
+- Payout release resolution
+- Dispute rejection
 
-### Order Status History
+### Background Jobs
 
-Order lifecycle changes are tracked separately from audit logs.
+BullMQ processes email notifications asynchronously.
 
-Examples:
+Supported jobs:
 
-```text
-PENDING → CONFIRMED
-PENDING → CANCELLED
-CONFIRMED → CANCELLED
-```
-
-Each status history record can include:
-
-- actor
-- previous status
-- new status
-- reason
-- metadata
-- timestamp
-
----
-
-## Example Curl Commands
-
-### Register
-
-```bash
-curl --request POST \
-  --url http://localhost:4444/api/v1/auth/register \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "fullName": "John Doe",
-    "email": "john@example.com",
-    "password": "password123",
-    "role": "CUSTOMER"
-  }'
-```
-
-### Login
-
-```bash
-curl --request POST \
-  --url http://localhost:4444/api/v1/auth/login \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "email": "john@example.com",
-    "password": "password123"
-  }'
-```
-
-### Checkout With Coupon
-
-```bash
-curl --request POST \
-  --url http://localhost:4444/api/v1/orders/checkout \
-  --header 'Authorization: Bearer CUSTOMER_TOKEN' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "couponCode": "SAVE10"
-  }'
-```
-
-### Request Refund
-
-```bash
-curl --request POST \
-  --url http://localhost:4444/api/v1/refunds/ORDER_ID/request \
-  --header 'Authorization: Bearer CUSTOMER_TOKEN' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "reason": "CUSTOMER_REQUEST"
-  }'
-```
-
-### Approve Refund
-
-```bash
-curl --request PATCH \
-  --url http://localhost:4444/api/v1/refunds/ORDER_ID/approve \
-  --header 'Authorization: Bearer ADMIN_TOKEN'
-```
-
-### View Audit Logs
-
-```bash
-curl --request GET \
-  --url "http://localhost:4444/api/v1/audit-logs?page=1&limit=20&entityType=ORDER" \
-  --header "Authorization: Bearer ADMIN_TOKEN"
-```
-
-### View Vendor Payouts
-
-```bash
-curl --request GET \
-  --url http://localhost:4444/api/v1/payouts/me \
-  --header "Authorization: Bearer VENDOR_TOKEN"
-```
+- Order confirmation emails
+- Refund emails
+- Payout emails
+- Dispute opened emails
+- Dispute response emails
+- Dispute resolution emails
 
 ---
 
@@ -493,29 +582,32 @@ curl --request GET \
 
 - Authentication API tests
 - Order API tests
-- Webhook route tests
+- Webhook tests
 - Webhook idempotency tests
-- Email worker retry tests
-- Email producer tests
-- Refund workflow tests
 - Inventory reservation tests
-- Audit log API tests
-- Coupon API tests
-- Payout API tests
+- Refund workflow tests
+- Coupon workflow tests
+- Audit log tests
+- Payout settlement tests
+- Delivery release tests
+- Dispute payout freeze tests
+- Dispute resolution settlement tests
 
 ---
 
 ## Future Improvements
 
-- Docker Compose setup for PostgreSQL, Redis, API, and workers
+- Docker Compose setup
 - CI/CD pipeline
-- More complete Swagger route documentation
+- More complete Swagger documentation
 - Refresh token authentication
 - Product reviews
-- Vendor analytics dashboard
+- Vendor analytics
 - Scheduled payout processing
 - Search indexing
 - Metrics endpoint
 - Centralized structured logging
 
----
+```
+
+```
