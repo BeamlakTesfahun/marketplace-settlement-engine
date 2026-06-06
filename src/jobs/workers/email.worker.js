@@ -22,9 +22,11 @@ const getEmailContent = ({
     vendorName,
     customerName,
     orderId,
+    disputeId,
     totalAmount,
     payoutAmount,
     reason,
+    vendorResponse,
 }) => {
     if (type === 'order-confirmation-email') {
         return {
@@ -94,6 +96,30 @@ const getEmailContent = ({
             <p>Your payout for order <strong>${orderId}</strong> failed.</p>
             <p>Reason: <strong>${reason}</strong></p>
         `,
+        };
+    }
+
+    if (type === 'dispute-opened-email') {
+        return {
+            subject: 'Your order dispute was opened',
+            html: `
+                <h2>Dispute Opened</h2>
+                <p>Hello ${customerName},</p>
+                <p>Your dispute <strong>${disputeId}</strong> for order <strong>${orderId}</strong> has been opened.</p>
+                <p>Reason: <strong>${reason}</strong></p>
+            `,
+        };
+    }
+
+    if (type === 'dispute-vendor-responded-email') {
+        return {
+            subject: 'A vendor responded to your dispute',
+            html: `
+                <h2>Vendor Response Received</h2>
+                <p>Hello ${customerName},</p>
+                <p>A vendor responded to dispute <strong>${disputeId}</strong> for order <strong>${orderId}</strong>.</p>
+                <p>Response: <strong>${vendorResponse}</strong></p>
+            `,
         };
     }
 

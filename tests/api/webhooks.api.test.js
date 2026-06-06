@@ -16,6 +16,10 @@ jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addRefundRequestedEmailJob: jest.fn(),
     addRefundApprovedEmailJob: jest.fn(),
     addRefundRejectedEmailJob: jest.fn(),
+    addPayoutPaidEmailJob: jest.fn(),
+    addPayoutFailedEmailJob: jest.fn(),
+    addDisputeOpenedEmailJob: jest.fn(),
+    addDisputeVendorRespondedEmailJob: jest.fn(),
 }));
 
 const request = (await import('supertest')).default;
