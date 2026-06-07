@@ -177,7 +177,7 @@ BULL_BOARD_PASSWORD=strongpassword
 
 ```bash
 git clone <repository-url>
-cd multi-vendor-marketplace-api
+cd marketplace-settlement-engine
 npm install
 ```
 
