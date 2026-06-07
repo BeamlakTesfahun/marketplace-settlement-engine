@@ -1,9 +1,11 @@
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
+
 import {
     addPayoutPaidEmailJob,
     addPayoutFailedEmailJob,
+    addPayoutReversalEmailJob,
 } from '../../jobs/producers/email.producer.js';
 import { OPEN_DISPUTE_STATUSES } from '../disputes/dispute.service.js';
 
@@ -150,6 +152,15 @@ const markPayoutAsPaid = async (user, payoutId) => {
         payoutId: payout.id,
         orderId: payout.orderId,
         payoutAmount: Number(payout.payoutAmount),
+    });
+
+    await createLedgerEntry({
+        vendorId: payout.vendorId,
+        type: 'PAYOUT_PAID',
+        amount: Number(payout.payoutAmount),
+        referenceType: 'VENDOR_PAYOUT',
+        referenceId: payout.id,
+        reason: 'PAYOUT_MARKED_PAID',
     });
 
     return updatedPayout;
@@ -484,6 +495,244 @@ const retryFailedPayout = async (user, payoutId) => {
     return updatedPayout;
 };
 
+const getVendorBalance = async (vendorId, db = prisma) => {
+    const latestEntry = await db.vendorLedgerEntry.findFirst({
+        where: {
+            vendorId,
+        },
+        orderBy: {
+            createdAt: 'desc',
+        },
+    });
+
+    return latestEntry ? Number(latestEntry.balanceAfter) : 0;
+};
+
+const createLedgerEntry = async (
+    { vendorId, type, amount, referenceType, referenceId, reason },
+    db = prisma,
+) => {
+    const currentBalance = await getVendorBalance(vendorId, db);
+    const numericAmount = Number(amount);
+    const balanceAfter = currentBalance + numericAmount;
+
+    return db.vendorLedgerEntry.create({
+        data: {
+            vendorId,
+            type,
+            amount: numericAmount,
+            balanceAfter,
+            referenceType,
+            referenceId,
+            reason,
+        },
+    });
+};
+
+const calculateProportionalPayoutReversal = (payout, order, refundAmount) => {
+    const orderTotal = Number(order.totalAmount);
+
+    if (orderTotal <= 0) {
+        return Number(payout.payoutAmount);
+    }
+
+    const ratio = Number(refundAmount) / orderTotal;
+    const reversalAmount = Number(payout.payoutAmount) * ratio;
+
+    return Math.min(
+        Number(payout.payoutAmount),
+        Number(reversalAmount.toFixed(2)),
+    );
+};
+
+const createPayoutReversalForRefund = async (
+    { payout, amount, reason },
+    db = prisma,
+) => {
+    return db.payoutReversal.create({
+        data: {
+            payoutId: payout.id,
+            vendorId: payout.vendorId,
+            orderId: payout.orderId,
+            amount,
+            reason,
+        },
+    });
+};
+
+const applyRefundAgainstPayout = async (
+    {
+        orderId,
+        vendorId,
+        refundAmount,
+        reason = 'REFUND_APPROVED',
+        referenceType = 'ORDER',
+        referenceId = orderId,
+        actorId,
+    },
+    db = prisma,
+) => {
+    const payout = await db.vendorPayout.findUnique({
+        where: {
+            orderId_vendorId: {
+                orderId,
+                vendorId,
+            },
+        },
+        include: {
+            order: true,
+            vendor: {
+                include: {
+                    user: {
+                        select: {
+                            email: true,
+                            fullName: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!payout) {
+        throw new AppError(
+            'Vendor payout not found for refund settlement.',
+            404,
+            'VENDOR_PAYOUT_NOT_FOUND',
+        );
+    }
+
+    const reversalAmount = calculateProportionalPayoutReversal(
+        payout,
+        payout.order,
+        refundAmount,
+    );
+
+    if (payout.status === 'PAID') {
+        const reversal = await createPayoutReversalForRefund(
+            {
+                payout,
+                amount: reversalAmount,
+                reason,
+            },
+            db,
+        );
+
+        const ledgerEntry = await createLedgerEntry(
+            {
+                vendorId,
+                type: 'VENDOR_DEBIT',
+                amount: -reversalAmount,
+                referenceType: 'PAYOUT_REVERSAL',
+                referenceId: reversal.id,
+                reason,
+            },
+            db,
+        );
+
+        await createAuditLog({
+            userId: actorId,
+            action: 'PAYOUT_REVERSAL_CREATED',
+            entityType: 'PAYOUT_REVERSAL',
+            entityId: reversal.id,
+            metadata: {
+                orderId,
+                vendorId,
+                payoutId: payout.id,
+                refundAmount: Number(refundAmount),
+                reversalAmount,
+                previousPayoutStatus: payout.status,
+                reason,
+            },
+        });
+
+        await addPayoutReversalEmailJob({
+            to: payout.vendor.user.email,
+            vendorName: payout.vendor.storeName,
+            payoutId: payout.id,
+            orderId,
+            vendorId,
+            reversalId: reversal.id,
+            referenceId,
+            reversalAmount,
+            reason,
+        });
+
+        return {
+            payout,
+            reversal,
+            ledgerEntry,
+            reversalAmount,
+            mode: 'PAID_PAYOUT_DEBITED',
+        };
+    }
+
+    if (payout.status === 'ON_HOLD' || payout.status === 'AVAILABLE') {
+        const updatedPayout = await db.vendorPayout.update({
+            where: {
+                id: payout.id,
+            },
+            data: {
+                status: 'REVERSED',
+                holdReason: 'REFUND_REVERSED',
+            },
+        });
+
+        const ledgerEntry = await createLedgerEntry(
+            {
+                vendorId,
+                type: 'REFUND_REVERSAL',
+                amount: -reversalAmount,
+                referenceType,
+                referenceId,
+                reason,
+            },
+            db,
+        );
+
+        await createAuditLog({
+            userId: actorId,
+            action: 'PAYOUT_REVERSED_FOR_REFUND',
+            entityType: 'VENDOR_PAYOUT',
+            entityId: payout.id,
+            metadata: {
+                orderId,
+                vendorId,
+                payoutId: payout.id,
+                refundAmount: Number(refundAmount),
+                reversalAmount,
+                previousPayoutStatus: payout.status,
+                nextPayoutStatus: updatedPayout.status,
+                reason,
+            },
+        });
+
+        await addPayoutReversalEmailJob({
+            to: payout.vendor.user.email,
+            vendorName: payout.vendor.storeName,
+            payoutId: payout.id,
+            orderId,
+            vendorId,
+            referenceId,
+            reversalAmount,
+            reason,
+        });
+
+        return {
+            payout: updatedPayout,
+            reversal: null,
+            ledgerEntry,
+            reversalAmount,
+            mode: 'HELD_PAYOUT_REVERSED',
+        };
+    }
+
+    throw new AppError(
+        'Refund cannot be applied to this payout status.',
+        400,
+        'PAYOUT_NOT_REVERSIBLE',
+    );
+};
 export const payoutService = {
     createPayoutsForOrder,
     markPayoutsAvailableForDeliveredOrder,
@@ -494,4 +743,8 @@ export const payoutService = {
     markPayoutAsPaid,
     markPayoutAsFailed,
     retryFailedPayout,
+    createLedgerEntry,
+    getVendorBalance,
+    createPayoutReversalForRefund,
+    applyRefundAgainstPayout,
 };

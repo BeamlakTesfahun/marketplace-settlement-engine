@@ -2,6 +2,8 @@ import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { createAuditLog } from '../audit/audit.service.js';
 
+import { payoutService } from '../payouts/payout.service.js';
+
 import {
     addDisputeOpenedEmailJob,
     addDisputeVendorRespondedEmailJob,
@@ -371,15 +373,15 @@ const resolveDispute = async (user, orderId, vendorId, payload) => {
                 },
             });
 
-            const updatedPayout = await tx.vendorPayout.update({
-                where: {
-                    id: payout.id,
-                },
-                data: {
-                    status: 'ON_HOLD',
-                    holdReason: 'DISPUTE_REFUNDED',
-                },
-            });
+            // const updatedPayout = await tx.vendorPayout.update({
+            //     where: {
+            //         id: payout.id,
+            //     },
+            //     data: {
+            //         status: 'ON_HOLD',
+            //         holdReason: 'DISPUTE_REFUNDED',
+            //     },
+            // });
 
             const updatedOrder = await tx.order.update({
                 where: {
@@ -391,6 +393,20 @@ const resolveDispute = async (user, orderId, vendorId, payload) => {
                     refundProcessedAt: now,
                 },
             });
+
+            const settlementReversal =
+                await payoutService.applyRefundAgainstPayout(
+                    {
+                        orderId,
+                        vendorId,
+                        refundAmount,
+                        reason: payload.resolution,
+                        referenceType: 'ORDER_DISPUTE',
+                        referenceId: dispute.id,
+                        actorId: user.id,
+                    },
+                    tx,
+                );
 
             await createAuditLog({
                 userId: user.id,
@@ -413,6 +429,7 @@ const resolveDispute = async (user, orderId, vendorId, payload) => {
                 dispute: updatedDispute,
                 payout: updatedPayout,
                 order: updatedOrder,
+                settlementReversal,
             };
         }
 

@@ -3,7 +3,6 @@ import request from 'supertest';
 
 const mockAddPayoutPaidEmailJob = jest.fn();
 const mockAddPayoutFailedEmailJob = jest.fn();
-const mockAddDisputeResolvedEmailJob = jest.fn();
 
 jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addOrderConfirmationEmailJob: jest.fn(),
@@ -12,9 +11,10 @@ jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addRefundRejectedEmailJob: jest.fn(),
     addPayoutPaidEmailJob: mockAddPayoutPaidEmailJob,
     addPayoutFailedEmailJob: mockAddPayoutFailedEmailJob,
+    addPayoutReversalEmailJob: jest.fn(),
     addDisputeOpenedEmailJob: jest.fn(),
     addDisputeVendorRespondedEmailJob: jest.fn(),
-    addDisputeResolvedEmailJob: mockAddDisputeResolvedEmailJob,
+    addDisputeResolvedEmailJob: jest.fn(),
 }));
 
 const { default: app } = await import('../../src/app.js');

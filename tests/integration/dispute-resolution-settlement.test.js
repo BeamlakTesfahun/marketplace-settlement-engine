@@ -12,6 +12,7 @@ jest.unstable_mockModule('../../src/jobs/producers/email.producer.js', () => ({
     addRefundRejectedEmailJob: jest.fn(),
     addPayoutPaidEmailJob: jest.fn(),
     addPayoutFailedEmailJob: jest.fn(),
+    addPayoutReversalEmailJob: jest.fn(),
     addDisputeOpenedEmailJob: mockAddDisputeOpenedEmailJob,
     addDisputeVendorRespondedEmailJob: mockAddDisputeVendorRespondedEmailJob,
     addDisputeResolvedEmailJob: mockAddDisputeResolvedEmailJob,
