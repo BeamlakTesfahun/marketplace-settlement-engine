@@ -145,3 +145,19 @@ export const addDisputeResolvedEmailJob = async (payload) => {
         removeOnFail: false,
     });
 };
+
+export const addPayoutReversalEmailJob = async (payload) => {
+    return emailQueue.add('payout-reversal-email', payload, {
+        jobId: `payout-reversal-${payload.payoutId}-${payload.referenceId}`,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: {
+            age: 3600,
+            count: 1000,
+        },
+        removeOnFail: false,
+    });
+};

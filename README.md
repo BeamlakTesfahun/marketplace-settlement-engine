@@ -40,6 +40,7 @@ Instead of treating payment as the end of the transaction, the platform treats p
 - Delivery-based payout release
 - Vendor-specific disputes
 - Admin dispute resolution workflows
+- Payout reversals and vendor ledger entries
 - Audit logs and order status history
 - BullMQ email queues and workers
 - Bull Board queue dashboard
@@ -450,6 +451,40 @@ Effects:
 
 ---
 
+### Refunds After Payout Settlement
+
+If a refund is approved before the vendor payout is paid, the payout is reversed instead of being silently left in the settlement pipeline.
+
+```text
+Refund Approved
+      ↓
+Vendor Payout REVERSED
+      ↓
+Vendor Ledger REFUND_REVERSAL
+      ↓
+Audit Log + Vendor Notification
+```
+
+If a refund is approved after the vendor payout has already been paid, the system creates a payout reversal and records a vendor debit.
+
+```text
+Refund Approved After Payout Paid
+      ↓
+PayoutReversal Created
+      ↓
+Vendor Ledger Debit
+      ↓
+Vendor Balance May Become Negative
+      ↓
+Audit Log + Vendor Notification
+```
+
+This prevents the platform from refunding the customer while leaving vendor settlement untouched.
+
+Settlement actions remain fully auditable through payout reversal records, vendor ledger entries, audit logs, and notification history.
+
+---
+
 ## Main Workflows
 
 ### Checkout Flow
@@ -562,6 +597,9 @@ Important settlement actions are recorded, including:
 - Refund resolution
 - Payout release resolution
 - Dispute rejection
+- Payout reversed for refund
+- Payout reversal created
+- Vendor ledger debit
 
 ### Background Jobs
 
@@ -575,6 +613,7 @@ Supported jobs:
 - Dispute opened emails
 - Dispute response emails
 - Dispute resolution emails
+- Payout reversal emails
 
 ---
 
@@ -592,6 +631,7 @@ Supported jobs:
 - Delivery release tests
 - Dispute payout freeze tests
 - Dispute resolution settlement tests
+- Payout reversal and vendor ledger tests
 
 ---
 
@@ -607,7 +647,5 @@ Supported jobs:
 - Search indexing
 - Metrics endpoint
 - Centralized structured logging
-
-```
-
-```
+- Vendor balance recovery workflows
+- Automated settlement reconciliation

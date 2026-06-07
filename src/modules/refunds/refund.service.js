@@ -4,6 +4,8 @@ import { AppError } from '../../utils/AppError.js';
 
 import { createOrderStatusHistory } from '../orders/orderStatusHistory.service.js';
 
+import { payoutService } from '../payouts/payout.service.js';
+
 import {
     addRefundRequestedEmailJob,
     addRefundApprovedEmailJob,
@@ -172,7 +174,7 @@ const approveRefund = async (user, orderId) => {
     const refundedOrder = await prisma.$transaction(async (tx) => {
         await restoreOrderStock(tx, order.items);
 
-        return tx.order.update({
+        const updatedOrder = await tx.order.update({
             where: {
                 id: orderId,
             },
@@ -189,6 +191,27 @@ const approveRefund = async (user, orderId) => {
                 items: true,
             },
         });
+
+        const vendorIds = [
+            ...new Set(order.items.map((item) => item.vendorId)),
+        ];
+
+        for (const vendorId of vendorIds) {
+            await payoutService.applyRefundAgainstPayout(
+                {
+                    orderId: order.id,
+                    vendorId,
+                    refundAmount: Number(order.totalAmount),
+                    reason: 'REFUND_APPROVED',
+                    referenceType: 'ORDER',
+                    referenceId: order.id,
+                    actorId: user.id,
+                },
+                tx,
+            );
+        }
+
+        return updatedOrder;
     });
 
     await createAuditLog({

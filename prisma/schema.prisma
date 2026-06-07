@@ -84,6 +84,16 @@ enum PayoutStatus {
   PENDING
   PAID
   FAILED
+  REVERSED
+}
+
+enum VendorLedgerEntryType {
+  PAYOUT_HOLD
+  PAYOUT_RELEASE
+  PAYOUT_PAID
+  REFUND_REVERSAL
+  VENDOR_DEBIT
+  ADJUSTMENT
 }
 
 enum OrderDisputeStatus {
@@ -128,12 +138,13 @@ model Vendor {
   description String?
   status      VendorStatus @default(PENDING)
 
-  products   Product[]
-  orderItems OrderItem[]
-  coupons    Coupon[]
-  payouts VendorPayout[]
-  disputes OrderDispute[]
-
+  products        Product[]
+  orderItems      OrderItem[]
+  coupons         Coupon[]
+  payouts         VendorPayout[]
+  disputes        OrderDispute[]
+  ledgerEntries   VendorLedgerEntry[]
+  payoutReversals PayoutReversal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -264,8 +275,9 @@ model Order {
   inventoryReservations InventoryReservation[]
   statusHistory         OrderStatusHistory[]
   couponUsages          CouponUsage[]
-  payouts VendorPayout[]
+  payouts               VendorPayout[]
   disputes              OrderDispute[]
+  payoutReversals       PayoutReversal[]
 
   couponCode     String?
   discountAmount Decimal  @default(0) @db.Decimal(10, 2)
@@ -419,10 +431,10 @@ model VendorPayout {
   id String @id @default(cuid())
 
   vendorId String
-  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
 
   orderId String
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   grossAmount Decimal @db.Decimal(10, 2)
 
@@ -439,8 +451,45 @@ model VendorPayout {
 
   failureReason String?
 
+  reversals PayoutReversal[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([orderId, vendorId])
+}
+
+model VendorLedgerEntry {
+  id            String                @id @default(uuid())
+  vendorId      String
+  type          VendorLedgerEntryType
+  amount        Decimal               @db.Decimal(10, 2)
+  balanceAfter  Decimal               @db.Decimal(10, 2)
+  referenceType String
+  referenceId   String
+  reason        String?
+  createdAt     DateTime              @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@index([referenceType, referenceId])
+}
+
+model PayoutReversal {
+  id        String   @id @default(uuid())
+  payoutId  String
+  vendorId  String
+  orderId   String
+  amount    Decimal  @db.Decimal(10, 2)
+  reason    String?
+  createdAt DateTime @default(now())
+
+  payout VendorPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  vendor Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  order  Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([payoutId])
+  @@index([vendorId])
+  @@index([orderId])
 }
