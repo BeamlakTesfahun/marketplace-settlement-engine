@@ -1,4 +1,4 @@
-# Multi-Vendor Marketplace API
+# Marketplace Settlement Engine
 
 A settlement-focused backend API for multi-vendor commerce built with Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, Stripe, and Jest.
 
@@ -24,6 +24,40 @@ This project models those operational realities through a settlement-focused arc
 - Auditable financial workflows
 
 Instead of treating payment as the end of the transaction, the platform treats payment as the beginning of a settlement lifecycle that continues until funds are either released to the vendor or reversed through a dispute or refund workflow.
+
+---
+
+## Settlement Architecture
+
+```text
+Customer
+    |
+Checkout
+    |
+Stripe Payment
+    |
+Order Confirmed
+    |
+Vendor Payout (ON_HOLD)
+    |
+Order Delivered
+    |
+Dispute Window
+    |
++-------------------+
+| Customer Dispute? |
++-------------------+
+    |
+Admin Review
+    |
++--------+---------+--------+
+| Refund | Release | Reject |
++--------+---------+--------+
+    |
+Final Settlement
+```
+
+This system focuses on post-payment commerce operations rather than storefront functionality. The primary business workflows involve payout eligibility, dispute handling, settlement reversals, vendor ledger accounting, and auditable financial decisions.
 
 ---
 
@@ -105,38 +139,6 @@ tests/
 |-- integration/
 |-- jobs/
 `-- helpers/
-```
-
----
-
-## Settlement Architecture
-
-```text
-Customer
-    |
-Checkout
-    |
-Stripe Payment
-    |
-Order Confirmed
-    |
-Vendor Payout (ON_HOLD)
-    |
-Order Delivered
-    |
-Dispute Window
-    |
-+-------------------+
-| Customer Dispute? |
-+-------------------+
-    |
-Admin Review
-    |
-+--------+---------+--------+
-| Refund | Release | Reject |
-+--------+---------+--------+
-    |
-Final Settlement
 ```
 
 ---
