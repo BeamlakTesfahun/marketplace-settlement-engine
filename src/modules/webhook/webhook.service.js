@@ -1,293 +1,290 @@
-import { prisma } from '../../config/prisma.js';
-import { addOrderConfirmationEmailJob } from '../../jobs/producers/email.producer.js';
-import { createAuditLog } from '../audit/audit.service.js';
-import { payoutService } from '../payouts/payout.service.js';
+import { prisma } from "../../config/prisma.js";
+import { addOrderConfirmationEmailJob } from "../../jobs/producers/email.producer.js";
+import { createAuditLog } from "../audit/audit.service.js";
+import { payoutService } from "../payouts/payout.service.js";
 
 const confirmInventoryReservations = async (tx, orderId) => {
-    await tx.inventoryReservation.updateMany({
-        where: {
-            orderId,
-            status: 'ACTIVE',
-        },
-        data: {
-            status: 'CONFIRMED',
-        },
-    });
+  await tx.inventoryReservation.updateMany({
+    where: {
+      orderId,
+      status: "ACTIVE",
+    },
+    data: {
+      status: "CONFIRMED",
+    },
+  });
 };
 
 const releaseInventoryReservations = async (tx, order) => {
-    const activeReservations = order.inventoryReservations.filter(
-        (reservation) => reservation.status === 'ACTIVE',
-    );
+  const activeReservations = order.inventoryReservations.filter(
+    (reservation) => reservation.status === "ACTIVE",
+  );
 
-    for (const reservation of activeReservations) {
-        await tx.product.update({
-            where: {
-                id: reservation.productId,
-            },
-            data: {
-                stock: {
-                    increment: reservation.quantity,
-                },
-                status: 'ACTIVE',
-            },
-        });
-    }
-
-    await tx.inventoryReservation.updateMany({
-        where: {
-            orderId: order.id,
-            status: 'ACTIVE',
+  for (const reservation of activeReservations) {
+    await tx.product.update({
+      where: {
+        id: reservation.productId,
+      },
+      data: {
+        stock: {
+          increment: reservation.quantity,
         },
-        data: {
-            status: 'EXPIRED',
-        },
+        status: "ACTIVE",
+      },
     });
+  }
 
-    return activeReservations;
+  await tx.inventoryReservation.updateMany({
+    where: {
+      orderId: order.id,
+      status: "ACTIVE",
+    },
+    data: {
+      status: "EXPIRED",
+    },
+  });
+
+  return activeReservations;
 };
 
 const handleCheckoutCompleted = async (event) => {
-    const session = event.data.object;
-    const orderId = session.metadata?.orderId;
+  const session = event.data.object;
+  const orderId = session.metadata?.orderId;
 
-    if (!orderId) {
-        return null;
-    }
+  if (!orderId) {
+    return null;
+  }
 
-    const order = await prisma.order.findUnique({
+  const order = await prisma.order.findUnique({
+    where: {
+      id: orderId,
+    },
+    include: {
+      user: {
+        select: {
+          fullName: true,
+          email: true,
+        },
+      },
+      items: true,
+      inventoryReservations: true,
+    },
+  });
+
+  if (!order) {
+    return null;
+  }
+
+  if (order.paymentStatus === "PAID") {
+    return null;
+  }
+
+  const { paidOrder: updatedOrder, allocatedPayouts } =
+    await prisma.$transaction(async (tx) => {
+      const paidOrder = await tx.order.update({
         where: {
-            id: orderId,
+          id: orderId,
+        },
+        data: {
+          paymentStatus: "PAID",
+          status: "CONFIRMED",
+          stripePaymentIntentId:
+            typeof session.payment_intent === "string"
+              ? session.payment_intent
+              : session.payment_intent?.id,
+          paidAt: new Date(),
         },
         include: {
-            user: {
-                select: {
-                    fullName: true,
-                    email: true,
-                },
+          user: {
+            select: {
+              fullName: true,
+              email: true,
             },
-            items: true,
-            inventoryReservations: true,
+          },
+          inventoryReservations: true,
         },
+      });
+
+      await confirmInventoryReservations(tx, orderId);
+      const allocatedPayouts = await payoutService.createPayoutsForOrder(
+        tx,
+        order,
+      );
+
+      return { paidOrder, allocatedPayouts };
     });
 
-    if (!order) {
-        return null;
-    }
+  await createAuditLog({
+    action: "PAYMENT_CONFIRMED",
+    entityType: "ORDER",
+    entityId: updatedOrder.id,
+    metadata: {
+      stripeEventId: event.id,
+      stripePaymentIntentId: updatedOrder.stripePaymentIntentId,
+      totalAmount: Number(updatedOrder.totalAmount),
+    },
+  });
 
-    if (order.paymentStatus === 'PAID') {
-        return null;
-    }
+  await createAuditLog({
+    action: "INVENTORY_CONFIRMED",
+    entityType: "ORDER",
+    entityId: updatedOrder.id,
+    metadata: {
+      stripeEventId: event.id,
+      reservations: order.inventoryReservations.map((reservation) => ({
+        productId: reservation.productId,
+        quantity: reservation.quantity,
+        previousStatus: reservation.status,
+      })),
+    },
+  });
 
-    const { paidOrder: updatedOrder, allocatedPayouts } =
-        await prisma.$transaction(async (tx) => {
-            const paidOrder = await tx.order.update({
-                where: {
-                    id: orderId,
-                },
-                data: {
-                    paymentStatus: 'PAID',
-                    status: 'CONFIRMED',
-                    stripePaymentIntentId:
-                        typeof session.payment_intent === 'string'
-                            ? session.payment_intent
-                            : session.payment_intent?.id,
-                    paidAt: new Date(),
-                },
-                include: {
-                    user: {
-                        select: {
-                            fullName: true,
-                            email: true,
-                        },
-                    },
-                    inventoryReservations: true,
-                },
-            });
-
-            await confirmInventoryReservations(tx, orderId);
-            const allocatedPayouts = await payoutService.createPayoutsForOrder(
-                tx,
-                order,
-            );
-
-            return { paidOrder, allocatedPayouts };
-        });
-
+  if (allocatedPayouts.length > 0) {
     await createAuditLog({
-        action: 'PAYMENT_CONFIRMED',
-        entityType: 'ORDER',
-        entityId: updatedOrder.id,
-        metadata: {
-            stripeEventId: event.id,
-            stripePaymentIntentId: updatedOrder.stripePaymentIntentId,
-            totalAmount: Number(updatedOrder.totalAmount),
-        },
+      action: "PAYOUT_ALLOCATED_ON_HOLD",
+      entityType: "ORDER",
+      entityId: updatedOrder.id,
+      metadata: {
+        stripeEventId: event.id,
+        payouts: allocatedPayouts.map((payout) => ({
+          payoutId: payout.id,
+          vendorId: payout.vendorId,
+          grossAmount: Number(payout.grossAmount),
+          platformFee: Number(payout.platformFee),
+          payoutAmount: Number(payout.payoutAmount),
+          status: payout.status,
+          holdReason: payout.holdReason,
+        })),
+      },
     });
+  }
 
-    await createAuditLog({
-        action: 'INVENTORY_CONFIRMED',
-        entityType: 'ORDER',
-        entityId: updatedOrder.id,
-        metadata: {
-            stripeEventId: event.id,
-            reservations: order.inventoryReservations.map((reservation) => ({
-                productId: reservation.productId,
-                quantity: reservation.quantity,
-                previousStatus: reservation.status,
-            })),
-        },
-    });
+  await addOrderConfirmationEmailJob({
+    to: updatedOrder.user.email,
+    customerName: updatedOrder.user.fullName,
+    orderId: updatedOrder.id,
+    totalAmount: Number(updatedOrder.totalAmount),
+  });
 
-    if (allocatedPayouts.length > 0) {
-        await createAuditLog({
-            action: 'PAYOUT_ALLOCATED_ON_HOLD',
-            entityType: 'ORDER',
-            entityId: updatedOrder.id,
-            metadata: {
-                stripeEventId: event.id,
-                payouts: allocatedPayouts.map((payout) => ({
-                    payoutId: payout.id,
-                    vendorId: payout.vendorId,
-                    grossAmount: Number(payout.grossAmount),
-                    platformFee: Number(payout.platformFee),
-                    payoutAmount: Number(payout.payoutAmount),
-                    status: payout.status,
-                    holdReason: payout.holdReason,
-                })),
-            },
-        });
-    }
-
-    await addOrderConfirmationEmailJob({
-        to: updatedOrder.user.email,
-        customerName: updatedOrder.user.fullName,
-        orderId: updatedOrder.id,
-        totalAmount: Number(updatedOrder.totalAmount),
-    });
-
-    return updatedOrder;
+  return updatedOrder;
 };
 
 const handleCheckoutExpired = async (event) => {
-    const session = event.data.object;
-    const orderId = session.metadata?.orderId;
+  const session = event.data.object;
+  const orderId = session.metadata?.orderId;
 
-    if (!orderId) {
-        return null;
-    }
+  if (!orderId) {
+    return null;
+  }
 
-    const order = await prisma.order.findUnique({
-        where: {
-            id: orderId,
-        },
-        include: {
-            inventoryReservations: true,
-        },
+  const order = await prisma.order.findUnique({
+    where: {
+      id: orderId,
+    },
+    include: {
+      inventoryReservations: true,
+    },
+  });
+
+  if (!order) {
+    return null;
+  }
+
+  if (order.status !== "PENDING" || order.paymentStatus !== "PENDING") {
+    return null;
+  }
+
+  const releasedReservations = await prisma.$transaction(async (tx) => {
+    const activeReservations = await releaseInventoryReservations(tx, order);
+
+    await tx.order.update({
+      where: {
+        id: orderId,
+      },
+      data: {
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+      },
     });
 
-    if (!order) {
-        return null;
-    }
+    return activeReservations;
+  });
 
-    if (order.status !== 'PENDING' || order.paymentStatus !== 'PENDING') {
-        return null;
-    }
+  await createAuditLog({
+    action: "CHECKOUT_EXPIRED",
+    entityType: "ORDER",
+    entityId: order.id,
+    metadata: {
+      stripeEventId: event.id,
+    },
+  });
 
-    const releasedReservations = await prisma.$transaction(async (tx) => {
-        const activeReservations = await releaseInventoryReservations(
-            tx,
-            order,
-        );
+  await createAuditLog({
+    action: "INVENTORY_RELEASED",
+    entityType: "ORDER",
+    entityId: order.id,
+    metadata: {
+      stripeEventId: event.id,
+      releasedReservations: releasedReservations.map((reservation) => ({
+        productId: reservation.productId,
+        quantity: reservation.quantity,
+      })),
+    },
+  });
 
-        await tx.order.update({
-            where: {
-                id: orderId,
-            },
-            data: {
-                status: 'CANCELLED',
-                cancelledAt: new Date(),
-            },
-        });
-
-        return activeReservations;
-    });
-
-    await createAuditLog({
-        action: 'CHECKOUT_EXPIRED',
-        entityType: 'ORDER',
-        entityId: order.id,
-        metadata: {
-            stripeEventId: event.id,
-        },
-    });
-
-    await createAuditLog({
-        action: 'INVENTORY_RELEASED',
-        entityType: 'ORDER',
-        entityId: order.id,
-        metadata: {
-            stripeEventId: event.id,
-            releasedReservations: releasedReservations.map((reservation) => ({
-                productId: reservation.productId,
-                quantity: reservation.quantity,
-            })),
-        },
-    });
-
-    return order;
+  return order;
 };
 
 export const processStripeEvent = async (event) => {
-    const existingEvent = await prisma.webhookEvent.findUnique({
-        where: {
-            stripeEventId: event.id,
-        },
-    });
+  const existingEvent = await prisma.webhookEvent.findUnique({
+    where: {
+      stripeEventId: event.id,
+    },
+  });
 
-    if (existingEvent?.processed) {
-        return {
-            received: true,
-            duplicate: true,
-            processed: false,
-        };
-    }
-
-    if (event.type === 'checkout.session.completed') {
-        await handleCheckoutCompleted(event);
-    }
-
-    if (event.type === 'checkout.session.expired') {
-        await handleCheckoutExpired(event);
-    }
-
-    await prisma.webhookEvent.upsert({
-        where: {
-            stripeEventId: event.id,
-        },
-        update: {
-            type: event.type,
-            processed: true,
-        },
-        create: {
-            stripeEventId: event.id,
-            type: event.type,
-            processed: true,
-        },
-    });
-
-    await createAuditLog({
-        action: 'STRIPE_WEBHOOK_PROCESSED',
-        entityType: 'STRIPE_EVENT',
-        entityId: event.id,
-        metadata: {
-            eventType: event.type,
-        },
-    });
-
+  if (existingEvent?.processed) {
     return {
-        received: true,
-        duplicate: false,
-        processed: true,
+      received: true,
+      duplicate: true,
+      processed: false,
     };
+  }
+
+  if (event.type === "checkout.session.completed") {
+    await handleCheckoutCompleted(event);
+  }
+
+  if (event.type === "checkout.session.expired") {
+    await handleCheckoutExpired(event);
+  }
+
+  await prisma.webhookEvent.upsert({
+    where: {
+      stripeEventId: event.id,
+    },
+    update: {
+      type: event.type,
+      processed: true,
+    },
+    create: {
+      stripeEventId: event.id,
+      type: event.type,
+      processed: true,
+    },
+  });
+
+  await createAuditLog({
+    action: "STRIPE_WEBHOOK_PROCESSED",
+    entityType: "STRIPE_EVENT",
+    entityId: event.id,
+    metadata: {
+      eventType: event.type,
+    },
+  });
+
+  return {
+    received: true,
+    duplicate: false,
+    processed: true,
+  };
 };

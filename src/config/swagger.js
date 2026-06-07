@@ -1,34 +1,34 @@
-import swaggerJsdoc from 'swagger-jsdoc';
+import swaggerJsdoc from "swagger-jsdoc";
 
 export const swaggerSpec = swaggerJsdoc({
-    definition: {
-        openapi: '3.0.0',
-        info: {
-            title: 'Multi-Vendor Marketplace API',
-            version: '1.0.0',
-            description:
-                'API documentation for the multi-vendor marketplace backend.',
-        },
-        servers: [
-            {
-                url: 'http://localhost:4444/api/v1',
-                description: 'Local development server',
-            },
-        ],
-        components: {
-            securitySchemes: {
-                bearerAuth: {
-                    type: 'http',
-                    scheme: 'bearer',
-                    bearerFormat: 'JWT',
-                },
-            },
-        },
-        security: [
-            {
-                bearerAuth: [],
-            },
-        ],
+  definition: {
+    openapi: "3.0.0",
+    info: {
+      title: "Multi-Vendor Marketplace API",
+      version: "1.0.0",
+      description:
+        "API documentation for the multi-vendor marketplace backend.",
     },
-    apis: ['./src/modules/**/*.routes.js', './src/routes/*.js'],
+    servers: [
+      {
+        url: "http://localhost:4444/api/v1",
+        description: "Local development server",
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+        },
+      },
+    },
+    security: [
+      {
+        bearerAuth: [],
+      },
+    ],
+  },
+  apis: ["./src/modules/**/*.routes.js", "./src/routes/*.js"],
 });

@@ -1,5 +1,5 @@
-import { AppError } from '../utils/AppError.js';
+import { AppError } from "../utils/AppError.js";
 
 export const notFound = (req, res, next) => {
-    next(new AppError(`Route not found: ${req.originalUrl}`, 404, 'NOT_FOUND'));
+  next(new AppError(`Route not found: ${req.originalUrl}`, 404, "NOT_FOUND"));
 };

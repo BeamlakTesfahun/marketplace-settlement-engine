@@ -1,58 +1,58 @@
-import express from 'express';
+import express from "express";
 
-import { orderController } from './order.controller.js';
-import { protect } from '../../middlewares/authMiddleware.js';
-import { authorizeRoles } from '../../middlewares/roleMiddleware.js';
-import { checkoutRateLimiter } from '../../middlewares/rateLimiter.js';
-import { validateRequest } from '../../middlewares/validateRequest.js';
-import { orderIdParamSchema } from './order.validation.js';
+import { orderController } from "./order.controller.js";
+import { protect } from "../../middlewares/authMiddleware.js";
+import { authorizeRoles } from "../../middlewares/roleMiddleware.js";
+import { checkoutRateLimiter } from "../../middlewares/rateLimiter.js";
+import { validateRequest } from "../../middlewares/validateRequest.js";
+import { orderIdParamSchema } from "./order.validation.js";
 
-import { checkoutSchema } from './order.validation.js';
+import { checkoutSchema } from "./order.validation.js";
 
 const router = express.Router();
 
 router.use(protect);
 
 router.post(
-    '/checkout',
-    checkoutRateLimiter,
-    authorizeRoles('CUSTOMER'),
-    validateRequest(checkoutSchema),
-    orderController.checkout,
+  "/checkout",
+  checkoutRateLimiter,
+  authorizeRoles("CUSTOMER"),
+  validateRequest(checkoutSchema),
+  orderController.checkout,
 );
 
 router.get(
-    '/my-orders',
-    authorizeRoles('CUSTOMER'),
-    orderController.getMyOrders,
+  "/my-orders",
+  authorizeRoles("CUSTOMER"),
+  orderController.getMyOrders,
 );
 
 router.get(
-    '/vendor-orders',
-    authorizeRoles('VENDOR'),
-    orderController.getVendorOrders,
+  "/vendor-orders",
+  authorizeRoles("VENDOR"),
+  orderController.getVendorOrders,
 );
 
-router.get('/:orderId', orderController.getOrderById);
+router.get("/:orderId", orderController.getOrderById);
 
 router.patch(
-    '/:orderId/cancel',
-    authorizeRoles('CUSTOMER'),
-    validateRequest(orderIdParamSchema),
-    orderController.cancelOrder,
+  "/:orderId/cancel",
+  authorizeRoles("CUSTOMER"),
+  validateRequest(orderIdParamSchema),
+  orderController.cancelOrder,
 );
 
 router.patch(
-    '/:orderId/deliver',
-    authorizeRoles('VENDOR', 'ADMIN'),
-    validateRequest(orderIdParamSchema),
-    orderController.markOrderAsDelivered,
+  "/:orderId/deliver",
+  authorizeRoles("VENDOR", "ADMIN"),
+  validateRequest(orderIdParamSchema),
+  orderController.markOrderAsDelivered,
 );
 
 router.get(
-    '/:orderId/status-history',
-    validateRequest(orderIdParamSchema),
-    orderController.getOrderStatusHistory,
+  "/:orderId/status-history",
+  validateRequest(orderIdParamSchema),
+  orderController.getOrderStatusHistory,
 );
 
 export default router;

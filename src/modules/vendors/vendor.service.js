@@ -1,126 +1,126 @@
-import { prisma } from '../../config/prisma.js';
-import { AppError } from '../../utils/AppError.js';
+import { prisma } from "../../config/prisma.js";
+import { AppError } from "../../utils/AppError.js";
 
 const createVendorProfile = async (user, payload) => {
-    if (user.role !== 'VENDOR') {
-        throw new AppError(
-            'Only vendor users can create a vendor profile.',
-            403,
-            'FORBIDDEN',
-        );
-    }
+  if (user.role !== "VENDOR") {
+    throw new AppError(
+      "Only vendor users can create a vendor profile.",
+      403,
+      "FORBIDDEN",
+    );
+  }
 
-    const existingProfile = await prisma.vendor.findUnique({
-        where: {
-            userId: user.id,
+  const existingProfile = await prisma.vendor.findUnique({
+    where: {
+      userId: user.id,
+    },
+  });
+
+  if (existingProfile) {
+    throw new AppError(
+      "Vendor profile already exists.",
+      409,
+      "VENDOR_PROFILE_EXISTS",
+    );
+  }
+
+  const vendor = await prisma.vendor.create({
+    data: {
+      userId: user.id,
+      storeName: payload.storeName,
+      description: payload.description,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          role: true,
         },
-    });
+      },
+    },
+  });
 
-    if (existingProfile) {
-        throw new AppError(
-            'Vendor profile already exists.',
-            409,
-            'VENDOR_PROFILE_EXISTS',
-        );
-    }
-
-    const vendor = await prisma.vendor.create({
-        data: {
-            userId: user.id,
-            storeName: payload.storeName,
-            description: payload.description,
-        },
-        include: {
-            user: {
-                select: {
-                    id: true,
-                    fullName: true,
-                    email: true,
-                    role: true,
-                },
-            },
-        },
-    });
-
-    return vendor;
+  return vendor;
 };
 
 const getMyVendorProfile = async (user) => {
-    const vendor = await prisma.vendor.findUnique({
-        where: {
-            userId: user.id,
-        },
-    });
+  const vendor = await prisma.vendor.findUnique({
+    where: {
+      userId: user.id,
+    },
+  });
 
-    if (!vendor) {
-        throw new AppError(
-            'Vendor profile not found.',
-            404,
-            'VENDOR_PROFILE_NOT_FOUND',
-        );
-    }
+  if (!vendor) {
+    throw new AppError(
+      "Vendor profile not found.",
+      404,
+      "VENDOR_PROFILE_NOT_FOUND",
+    );
+  }
 
-    return vendor;
+  return vendor;
 };
 
 const getVendors = async () => {
-    return prisma.vendor.findMany({
-        orderBy: {
-            createdAt: 'desc',
-        },
+  return prisma.vendor.findMany({
+    orderBy: {
+      createdAt: "desc",
+    },
 
-        include: {
-            user: {
-                select: {
-                    id: true,
-                    fullName: true,
-                    email: true,
-                    role: true,
-                },
-            },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          role: true,
         },
-    });
+      },
+    },
+  });
 };
 
 const updateVendorStatus = async (vendorId, status) => {
-    const vendor = await prisma.vendor.findUnique({
-        where: {
-            id: vendorId,
-        },
-    });
+  const vendor = await prisma.vendor.findUnique({
+    where: {
+      id: vendorId,
+    },
+  });
 
-    if (!vendor) {
-        throw new AppError(
-            'Vendor profile not found.',
-            404,
-            'VENDOR_PROFILE_NOT_FOUND',
-        );
-    }
+  if (!vendor) {
+    throw new AppError(
+      "Vendor profile not found.",
+      404,
+      "VENDOR_PROFILE_NOT_FOUND",
+    );
+  }
 
-    return prisma.vendor.update({
-        where: {
-            id: vendorId,
-        },
+  return prisma.vendor.update({
+    where: {
+      id: vendorId,
+    },
 
-        data: {
-            status,
-        },
+    data: {
+      status,
+    },
 
-        include: {
-            user: {
-                select: {
-                    id: true,
-                    fullName: true,
-                    email: true,
-                },
-            },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
         },
-    });
+      },
+    },
+  });
 };
 
 export const vendorService = {
-    createVendorProfile,
-    getMyVendorProfile,
-    getVendors,
-    updateVendorStatus,
+  createVendorProfile,
+  getMyVendorProfile,
+  getVendors,
+  updateVendorStatus,
 };

@@ -1,8 +1,8 @@
 # Multi-Vendor Marketplace API
 
-A production-style backend API for a multi-vendor e-commerce marketplace built with Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, Stripe, and Jest.
+A settlement-focused backend API for multi-vendor commerce built with Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, Stripe, and Jest.
 
-Unlike traditional marketplace tutorials that release vendor funds immediately after payment, this project implements a settlement-focused architecture with payout holds, delivery-based release, vendor-specific disputes, dispute resolution workflows, audit logging, and background job processing.
+Unlike tutorial marketplaces that release vendor funds immediately after payment, this project models the operational work that happens between customer payment and vendor settlement: payout holds, delivery-based release, vendor-specific disputes, refund decisions, payout reversals, vendor ledger entries, audit logs, and asynchronous notifications.
 
 ---
 
@@ -20,9 +20,10 @@ This project models those operational realities through a settlement-focused arc
 - Delivery-based payout release
 - Vendor-specific dispute handling
 - Refund-aware dispute resolution
+- Payout reversal and vendor ledger accounting
 - Auditable financial workflows
 
-Instead of treating payment as the end of the transaction, the platform treats payment as the beginning of a settlement lifecycle that continues until funds are either released to the vendor or redirected through a dispute resolution process.
+Instead of treating payment as the end of the transaction, the platform treats payment as the beginning of a settlement lifecycle that continues until funds are either released to the vendor or reversed through a dispute or refund workflow.
 
 ---
 
@@ -72,39 +73,38 @@ Instead of treating payment as the end of the transaction, the platform treats p
 
 ```text
 src/
-├── config/
-├── middlewares/
-├── modules/
-│   ├── audit/
-│   ├── auth/
-│   ├── carts/
-│   ├── categories/
-│   ├── coupons/
-│   ├── disputes/
-│   ├── orders/
-│   ├── payouts/
-│   ├── products/
-│   ├── refunds/
-│   ├── vendors/
-│   └── webhook/
-├── jobs/
-│   ├── producers/
-│   ├── queues/
-│   ├── schedulers/
-│   └── workers/
-├── routes/
-└── utils/
+|-- config/
+|-- middlewares/
+|-- modules/
+|   |-- audit/
+|   |-- auth/
+|   |-- cart/
+|   |-- categories/
+|   |-- coupons/
+|   |-- disputes/
+|   |-- orders/
+|   |-- payouts/
+|   |-- products/
+|   |-- refunds/
+|   |-- vendors/
+|   `-- webhook/
+|-- jobs/
+|   |-- producers/
+|   |-- queues/
+|   `-- workers/
+|-- routes/
+`-- utils/
 
 prisma/
-├── migrations/
-├── seeds/
-└── schema.prisma
+|-- migrations/
+|-- seeds/
+`-- schema.prisma
 
 tests/
-├── api/
-├── integration/
-├── jobs/
-└── helpers/
+|-- api/
+|-- integration/
+|-- jobs/
+`-- helpers/
 ```
 
 ---
@@ -113,37 +113,37 @@ tests/
 
 ```text
 Customer
-    ↓
+    |
 Checkout
-    ↓
+    |
 Stripe Payment
-    ↓
+    |
 Order Confirmed
-    ↓
+    |
 Vendor Payout (ON_HOLD)
-    ↓
+    |
 Order Delivered
-    ↓
+    |
 Dispute Window
-    ↓
- ┌─────────────────────┐
- │ Customer Dispute?   │
- └─────────────────────┘
-      ↓
-  Admin Review
-      ↓
- ┌─────────┬─────────┬─────────┐
- │ Refund  │ Release │ Reject  │
- └─────────┴─────────┴─────────┘
-      ↓
- Final Settlement
+    |
++-------------------+
+| Customer Dispute? |
++-------------------+
+    |
+Admin Review
+    |
++--------+---------+--------+
+| Refund | Release | Reject |
++--------+---------+--------+
+    |
+Final Settlement
 ```
 
 ---
 
 ## Environment Variables
 
-Create a `.env` file:
+Create a `.env` file from `.env.example`:
 
 ```env
 DATABASE_URL="postgresql://postgres:password@localhost:5432/marketplace_db"
@@ -263,11 +263,11 @@ Successful payments do not immediately create payable vendor balances.
 
 ```text
 Payment Success
-      ↓
+      |
 Order Confirmed
-      ↓
+      |
 Vendor Payout Created
-      ↓
+      |
 Status = ON_HOLD
 ```
 
@@ -279,11 +279,11 @@ Payouts remain frozen until delivery and dispute conditions are satisfied.
 
 ```text
 Order Delivered
-      ↓
+      |
 availableAt Calculated
-      ↓
+      |
 Dispute Window Expires
-      ↓
+      |
 AVAILABLE Payout
 ```
 
@@ -310,8 +310,8 @@ Example:
 
 ```text
 Order #100
-├─ Vendor A payout
-└─ Vendor B payout
+|-- Vendor A payout
+`-- Vendor B payout
 ```
 
 A dispute against Vendor A does not affect Vendor B.
@@ -320,9 +320,9 @@ A dispute against Vendor A does not affect Vendor B.
 
 ```text
 OPEN
-    ↓
+    |
 VENDOR_RESPONDED
-    ↓
+    |
 UNDER_REVIEW
 ```
 
@@ -371,17 +371,18 @@ REJECT
 
 ```text
 Dispute
-    ↓
+    |
 RESOLVED_REFUND
-    ↓
+    |
 Refund Recorded
-    ↓
-Payout Remains ON_HOLD
+    |
+Payout Reversed Or Debited
 ```
 
 Effects:
 
 - Refund state updated
+- Vendor payout settlement adjusted
 - Audit log recorded
 - Customer notified
 - Vendor notified
@@ -392,18 +393,19 @@ Effects:
 
 ```text
 Dispute
-    ↓
+    |
 RESOLVED_REFUND
-    ↓
+    |
 Partial Refund Recorded
-    ↓
-Payout Remains ON_HOLD
+    |
+Proportional Payout Reversal
 ```
 
 Effects:
 
 - Partial refund amount stored
-- Settlement remains blocked
+- Vendor settlement is reversed proportionally
+- Settlement action is recorded in the ledger
 
 ---
 
@@ -411,9 +413,9 @@ Effects:
 
 ```text
 Dispute
-    ↓
+    |
 RESOLVED_RELEASE_PAYOUT
-    ↓
+    |
 Payout Eligible For Settlement
 ```
 
@@ -427,7 +429,7 @@ then:
 
 ```text
 ON_HOLD
-    ↓
+    |
 AVAILABLE
 ```
 
@@ -439,7 +441,7 @@ and the payout may continue through normal settlement processing.
 
 ```text
 Dispute
-    ↓
+    |
 REJECTED
 ```
 
@@ -457,11 +459,11 @@ If a refund is approved before the vendor payout is paid, the payout is reversed
 
 ```text
 Refund Approved
-      ↓
+      |
 Vendor Payout REVERSED
-      ↓
+      |
 Vendor Ledger REFUND_REVERSAL
-      ↓
+      |
 Audit Log + Vendor Notification
 ```
 
@@ -469,13 +471,13 @@ If a refund is approved after the vendor payout has already been paid, the syste
 
 ```text
 Refund Approved After Payout Paid
-      ↓
+      |
 PayoutReversal Created
-      ↓
+      |
 Vendor Ledger Debit
-      ↓
+      |
 Vendor Balance May Become Negative
-      ↓
+      |
 Audit Log + Vendor Notification
 ```
 
@@ -491,45 +493,46 @@ Settlement actions remain fully auditable through payout reversal records, vendo
 
 ```text
 Customer adds items to cart
-→ starts checkout
-→ stock is reserved
-→ order is created as PENDING
-→ Stripe Checkout session is created
+-> starts checkout
+-> stock is reserved
+-> order is created as PENDING
+-> Stripe Checkout session is created
 ```
 
 ### Payment Success Flow
 
 ```text
 Stripe sends checkout.session.completed
-→ webhook verifies signature
-→ duplicate event is ignored if already processed
-→ order is marked CONFIRMED and PAID
-→ inventory reservation is confirmed
-→ vendor payouts are generated as ON_HOLD
-→ confirmation email job is queued
+-> webhook verifies signature
+-> duplicate event is ignored if already processed
+-> order is marked CONFIRMED and PAID
+-> inventory reservation is confirmed
+-> vendor payouts are generated as ON_HOLD
+-> confirmation email job is queued
 ```
 
 ### Refund Flow
 
 ```text
 Customer requests refund
-→ admin approves or rejects refund
-→ approved refund calls Stripe refund API
-→ order is cancelled
-→ payment status becomes REFUNDED
-→ stock is restored
-→ refund email job is queued
-→ audit log and status history are recorded
+-> admin approves or rejects refund
+-> approved refund calls Stripe refund API
+-> order is cancelled
+-> payment status becomes REFUNDED
+-> stock is restored
+-> vendor payout settlement is reversed or debited
+-> refund email job is queued
+-> audit log and status history are recorded
 ```
 
 ### Coupon Flow
 
 ```text
 Admin creates coupon
-→ customer submits coupon during checkout
-→ system validates status, expiration, usage limits, and vendor rules
-→ discount is applied
-→ coupon usage is recorded
+-> customer submits coupon during checkout
+-> system validates status, expiration, usage limits, and vendor rules
+-> discount is applied
+-> coupon usage is recorded
 ```
 
 ---
@@ -583,6 +586,18 @@ This prevents overselling while still allowing stock restoration when:
 - Checkout expires
 - Orders are cancelled
 - Refunds are approved
+
+### Vendor Settlement Ledger
+
+Vendor ledger entries make settlement changes explicit rather than implicit.
+
+Ledger events include:
+
+- `PAYOUT_PAID`
+- `REFUND_REVERSAL`
+- `VENDOR_DEBIT`
+
+This allows paid payouts, held-payout reversals, and post-payout refund debits to be audited as financial movements instead of only status changes.
 
 ### Audit Logging
 
