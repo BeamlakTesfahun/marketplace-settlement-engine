@@ -4,7 +4,7 @@ export const swaggerSpec = swaggerJsdoc({
     definition: {
         openapi: '3.0.0',
         info: {
-            title: 'Multi-Vendor Marketplace API',
+            title: 'Marketplace Settlement Engine API',
             version: '1.0.0',
             description:
                 'API documentation for the multi-vendor marketplace backend.',
