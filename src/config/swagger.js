@@ -7,7 +7,7 @@ export const swaggerSpec = swaggerJsdoc({
             title: 'Marketplace Settlement Engine API',
             version: '1.0.0',
             description:
-                'API documentation for the multi-vendor marketplace backend.',
+                'API documentation for the marketplace settlement engine backend.',
         },
         servers: [
             {
