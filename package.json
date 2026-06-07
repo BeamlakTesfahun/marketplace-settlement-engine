@@ -1,44 +1,44 @@
 {
-    "type": "module",
-    "dependencies": {
-        "@bull-board/api": "7.1.5",
-        "@bull-board/express": "7.1.5",
-        "@prisma/adapter-pg": "7.8.0",
-        "@prisma/client": "7.8.0",
-        "bcryptjs": "3.0.3",
-        "bullmq": "5.76.10",
-        "cors": "2.8.6",
-        "dotenv": "17.4.2",
-        "express": "5.2.1",
-        "express-rate-limit": "8.5.2",
-        "helmet": "8.1.0",
-        "ioredis": "5.10.1",
-        "jsonwebtoken": "9.0.3",
-        "morgan": "1.10.1",
-        "nodemailer": "8.0.7",
-        "pg": "8.20.0",
-        "prisma": "7.8.0",
-        "redis": "5.12.1",
-        "slugify": "1.6.9",
-        "stripe": "22.1.1",
-        "swagger-jsdoc": "6.3.0",
-        "swagger-ui-express": "5.0.1",
-        "zod": "4.4.3"
-    },
-    "scripts": {
-        "dev": "nodemon src/server.js",
-        "start": "node src/server.js",
-        "worker:email": "node src/jobs/workers/email.worker.js",
-        "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
-        "test:watch": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --watch"
-    },
-    "prisma": {
-        "seed": "node prisma/seed.js"
-    },
-    "devDependencies": {
-        "cross-env": "10.1.0",
-        "jest": "30.4.2",
-        "nodemon": "3.1.14",
-        "supertest": "7.2.2"
-    }
+  "type": "module",
+  "dependencies": {
+    "@bull-board/api": "7.1.5",
+    "@bull-board/express": "7.1.5",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "bcryptjs": "3.0.3",
+    "bullmq": "5.76.10",
+    "cors": "2.8.6",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "express-rate-limit": "8.5.2",
+    "helmet": "8.1.0",
+    "ioredis": "5.10.1",
+    "jsonwebtoken": "9.0.3",
+    "morgan": "1.10.1",
+    "nodemailer": "8.0.7",
+    "pg": "8.20.0",
+    "prisma": "7.8.0",
+    "redis": "5.12.1",
+    "slugify": "1.6.9",
+    "stripe": "22.1.1",
+    "swagger-jsdoc": "6.3.0",
+    "swagger-ui-express": "5.0.1",
+    "zod": "4.4.3"
+  },
+  "scripts": {
+    "dev": "node init && nodemon src/server.js",
+    "start": "node init && node src/server.js",
+    "worker:email": "node src/jobs/workers/email.worker.js",
+    "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
+    "test:watch": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --watch"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "devDependencies": {
+    "cross-env": "10.1.0",
+    "jest": "30.4.2",
+    "nodemon": "3.1.14",
+    "supertest": "7.2.2"
+  }
 }
